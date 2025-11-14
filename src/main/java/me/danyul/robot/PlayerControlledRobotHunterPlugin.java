@@ -373,6 +373,8 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             as.setSmall(false);
             as.setGravity(true);
             as.setCanTick(true);
+            
+            as.setInvulnerable(false); // allow robot to take damage
         });
         return stand;
     }
@@ -504,22 +506,17 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             // Armor goes on robot AND player
             if (m.name().endsWith("_HELMET")) {
                 robot.getEquipment().setHelmet(reward.clone());
-                p.getInventory().setItem(EquipmentSlot.HEAD, reward.clone());
             } else if (m.name().endsWith("_CHESTPLATE")) {
                 robot.getEquipment().setChestplate(reward.clone());
-                p.getInventory().setItem(EquipmentSlot.CHEST, reward.clone());
             } else if (m.name().endsWith("_LEGGINGS")) {
                 robot.getEquipment().setLeggings(reward.clone());
-                p.getInventory().setItem(EquipmentSlot.LEGS, reward.clone());
             } else if (m.name().endsWith("_BOOTS")) {
                 robot.getEquipment().setBoots(reward.clone());
-                p.getInventory().setItem(EquipmentSlot.FEET, reward.clone());
             } else {
                 // Weapons: main hand if empty, otherwise just give to player
                 if (robot.getEquipment().getItemInMainHand() == null ||
                         robot.getEquipment().getItemInMainHand().getType() == Material.AIR) {
                     robot.getEquipment().setItemInMainHand(reward.clone());
-                    p.getInventory().setItemInMainHand(reward.clone());
                 } else {
                     p.getInventory().addItem(reward.clone());
                 }
@@ -606,7 +603,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             LivingEntity le = (LivingEntity) target;
             double damage = 4.0; // base
 
-            ItemStack weapon = p.getInventory().getItemInMainHand();
+            ItemStack weapon = robot.getEquipment().getItemInMainHand();
             if (weapon != null) {
                 String name = weapon.getType().name();
                 if (name.contains("WOODEN_SWORD")) damage = 4.0;
