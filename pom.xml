@@ -10,15 +10,22 @@
     <packaging>jar</packaging>
 
     <name>PlayerControlledRobotHunter</name>
-    <description>Robot-controlled hunter plugin for Minecraft Manhunt</description>
+    <description>Robot-controlled hunter plugin</description>
 
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
     </properties>
 
+    <!-- REQUIRED so GitHub Actions can download Paper API -->
+    <repositories>
+        <repository>
+            <id>papermc</id>
+            <url>https://repo.papermc.io/repository/maven-public/</url>
+        </repository>
+    </repositories>
+
     <dependencies>
-        <!-- Paper API for 1.21.x -->
         <dependency>
             <groupId>io.papermc.paper</groupId>
             <artifactId>paper-api</artifactId>
