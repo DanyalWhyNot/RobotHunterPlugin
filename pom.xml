@@ -17,10 +17,10 @@
         <maven.compiler.target>17</maven.compiler.target>
     </properties>
 
-    <!-- REQUIRED so GitHub Actions can download Paper API -->
+    <!-- PaperMC repo so Maven can find paper-api -->
     <repositories>
         <repository>
-            <id>papermc</id>
+            <id>papermc-repo</id>
             <url>https://repo.papermc.io/repository/maven-public/</url>
         </repository>
     </repositories>
