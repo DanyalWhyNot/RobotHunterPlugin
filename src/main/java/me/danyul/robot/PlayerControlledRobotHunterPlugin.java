@@ -32,7 +32,6 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
-import org.bukkit.util.Vector;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -254,10 +253,10 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                     Location loc = hunter.getLocation().clone();
                     robot.teleport(loc);
 
-                    // Hunter becomes invisible, non-collidable, invulnerable, and slow
+                    // Hunter becomes invisible, non-collidable, and slow
                     hunter.setInvisible(true);
                     hunter.setCollidable(false);
-                    hunter.setInvulnerable(true); // immune to all damage
+                    hunter.setInvulnerable(false); // allow damage events so we can redirect fall dmg
                     if (!hunter.hasPotionEffect(PotionEffectType.SLOWNESS)) {
                         hunter.addPotionEffect(new PotionEffect(
                                 PotionEffectType.SLOWNESS,
@@ -421,7 +420,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
         p.setInvisible(true);
         p.setCollidable(false);
-        p.setInvulnerable(true); // hunter is totally immune
+        p.setInvulnerable(false); // allow damage events
         p.addPotionEffect(new PotionEffect(
                 PotionEffectType.SLOWNESS,
                 Integer.MAX_VALUE,
@@ -511,6 +510,33 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     }
 
     // ------------------------------------------------------------------------
+    // DAMAGE HELPER
+    // ------------------------------------------------------------------------
+
+    private void applyRobotDamage(UUID hunterId, Entity robotEntity, double amount) {
+        double current = robotHealth.getOrDefault(hunterId, ROBOT_MAX_HP);
+        double newHp = current - amount;
+
+        if (newHp <= 0) {
+            robotHealth.put(hunterId, ROBOT_MAX_HP);
+            Player hunter = Bukkit.getPlayer(hunterId);
+            Location spawn = hunterSpawn.getOrDefault(
+                    hunterId,
+                    robotEntity.getWorld().getSpawnLocation()
+            );
+
+            if (hunter != null) {
+                hunter.sendMessage(ChatColor.RED + "Your robot died! Respawning at original spawn.");
+                hunter.teleport(spawn);
+            }
+
+            robotEntity.teleport(spawn);
+        } else {
+            robotHealth.put(hunterId, newHp);
+        }
+    }
+
+    // ------------------------------------------------------------------------
     // EVENTS
     // ------------------------------------------------------------------------
 
@@ -526,7 +552,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         p.setSaturation(20f);
     }
 
-    // Hunter takes no damage from anything (including fall)
+    // Hunter takes no damage; fall damage is redirected to robot HP
     @EventHandler
     public void onHunterDamage(EntityDamageEvent e) {
         if (!(e.getEntity() instanceof Player)) return;
@@ -534,6 +560,16 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         if (!hunters.contains(p.getUniqueId())) return;
 
         e.setCancelled(true);
+
+        if (e.getCause() == EntityDamageEvent.DamageCause.FALL) {
+            UUID robotId = hunterRobot.get(p.getUniqueId());
+            if (robotId == null) return;
+
+            Entity robotEntity = Bukkit.getEntity(robotId);
+            if (robotEntity == null) return;
+
+            applyRobotDamage(p.getUniqueId(), robotEntity, e.getFinalDamage());
+        }
     }
 
     @EventHandler
@@ -613,7 +649,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         p.sendMessage(ChatColor.GREEN + "Applied " + ChatColor.stripColor(si.name) + " to your robot and inventory.");
     }
 
-    // Robot (armor stand) takes all damage; custom 15-heart HP
+    // Robot (armor stand) takes direct damage; custom 15-heart HP
     @EventHandler
     public void onRobotDamage(EntityDamageEvent e) {
         Entity entity = e.getEntity();
@@ -625,27 +661,8 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         UUID hunterId = robotOwner.get(entityId);
         if (!hunters.contains(hunterId)) return;
 
-        double current = robotHealth.getOrDefault(hunterId, ROBOT_MAX_HP);
-        double newHp = current - e.getFinalDamage();
-        e.setCancelled(true); // handle damage ourselves
-
-        if (newHp <= 0) {
-            robotHealth.put(hunterId, ROBOT_MAX_HP);
-            Player hunter = Bukkit.getPlayer(hunterId);
-            Location spawn = hunterSpawn.getOrDefault(
-                    hunterId,
-                    entity.getWorld().getSpawnLocation()
-            );
-
-            if (hunter != null) {
-                hunter.sendMessage(ChatColor.RED + "Your robot died! Respawning at original spawn.");
-                hunter.teleport(spawn);
-            }
-
-            entity.teleport(spawn);
-        } else {
-            robotHealth.put(hunterId, newHp);
-        }
+        e.setCancelled(true);
+        applyRobotDamage(hunterId, entity, e.getFinalDamage());
     }
 
     // Robot attack: buffed damage with cooldown, uses vanilla hit detection
