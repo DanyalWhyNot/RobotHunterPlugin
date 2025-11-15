@@ -240,9 +240,9 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                     hunter.setInvisible(true);
                     hunter.setCollidable(false);
                     hunter.setInvulnerable(true);
-                    if (!hunter.hasPotionEffect(PotionEffectType.SLOW)) {
+                    if (!hunter.hasPotionEffect(PotionEffectType.SLOWNESS)) {
                         hunter.addPotionEffect(new PotionEffect(
-                                PotionEffectType.SLOW,
+                                PotionEffectType.SLOWNESS,
                                 Integer.MAX_VALUE,
                                 1, // Slowness II – slower than normal
                                 false, false, false
@@ -281,12 +281,10 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
                     // Ensure hunter has a compass
                     ItemStack compass = null;
-                    int slotWithCompass = -1;
                     for (int i = 0; i < hunter.getInventory().getSize(); i++) {
                         ItemStack item = hunter.getInventory().getItem(i);
                         if (item != null && item.getType() == Material.COMPASS) {
                             compass = item;
-                            slotWithCompass = i;
                             break;
                         }
                     }
@@ -415,7 +413,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         p.setCollidable(false);
         p.setInvulnerable(true);
         p.addPotionEffect(new PotionEffect(
-                PotionEffectType.SLOW,
+                PotionEffectType.SLOWNESS,
                 Integer.MAX_VALUE,
                 1,
                 false, false, false
@@ -458,7 +456,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 p.setInvisible(false);
                 p.setCollidable(true);
                 p.setInvulnerable(false);
-                p.removePotionEffect(PotionEffectType.SLOW);
+                p.removePotionEffect(PotionEffectType.SLOWNESS);
             }
             removeRobot(id);
             BossBar bar = hunterBars.remove(id);
@@ -710,7 +708,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         e.getPlayer().setInvisible(false);
         e.getPlayer().setCollidable(true);
         e.getPlayer().setInvulnerable(false);
-        e.getPlayer().removePotionEffect(PotionEffectType.SLOW);
+        e.getPlayer().removePotionEffect(PotionEffectType.SLOWNESS);
 
         removeRobot(id);
         BossBar bar = hunterBars.remove(id);
@@ -746,4 +744,3 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         return Collections.emptyList();
     }
 }
-
