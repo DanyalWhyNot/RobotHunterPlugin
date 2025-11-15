@@ -28,28 +28,26 @@ import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.CompassMeta;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.Vector;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
-/**
- * Minecraft Speedrunner VS Player-Controlled Robot Hunter
- *
- * Hunter controls an armor-stand “robot” while their real body is invisible.
- * - WASD + mouse controls still work normally.
- * - Everyone sees the armor stand moving and fighting.
- * - Hunter has custom HP (10 hearts = 20 HP) with a boss bar.
- * - If robot dies, it respawns at original spawn.
- * - Hunger disabled for hunter.
- * - Gear is unlocked over time via /robothunter shop.
- */
 public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
 
     private static final String SHOP_TITLE = ChatColor.DARK_AQUA + "Robot Hunter Shop";
+
+    // Robot max HP: 24.0 = 12 hearts (a bit tankier than player)
+    private static final double ROBOT_MAX_HP = 24.0;
+
+    // Attack cooldown so robot can’t spam hits (ms)
+    private static final long ATTACK_COOLDOWN_MS = 600L;
 
     // Active hunters
     private final Set<UUID> hunters = new HashSet<>();
@@ -59,13 +57,18 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     private final Map<UUID, UUID> robotOwner = new HashMap<>();
     // Hunter original spawn location
     private final Map<UUID, Location> hunterSpawn = new HashMap<>();
-    // Custom robot HP (0–20)
+    // Custom robot HP
     private final Map<UUID, Double> robotHealth = new HashMap<>();
     // Boss bars
     private final Map<UUID, BossBar> hunterBars = new HashMap<>();
+    // Last attack times
+    private final Map<UUID, Long> lastAttackTime = new HashMap<>();
 
     // When the game started (ms since epoch)
     private long gameStartTime = -1L;
+
+    // Current runner (speedrunner) for compass tracking
+    private UUID runnerId = null;
 
     // Shop item definition
     private static class ShopItem {
@@ -94,6 +97,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
         setupShopItems();
         startRobotSyncTask();
+        startCompassTask();
 
         getLogger().info("PlayerControlledRobotHunter enabled.");
     }
@@ -121,14 +125,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     // SHOP SETUP
     // ------------------------------------------------------------------------
 
-    /**
-     * Define kits and unlock times:
-     *  - Wooden: 0s (instant)
-     *  - Stone: 600s (10 min)
-     *  - Iron: 2400s (40 min)
-     *  - Diamond: 3600s (60 min)
-     *  No netherite kit.
-     */
     private void setupShopItems() {
         // 0s - Wooden kit
         shopItems.add(new ShopItem(
@@ -216,13 +212,9 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     }
 
     // ------------------------------------------------------------------------
-    // ROBOT SYNC
+    // ROBOT SYNC (position + bossbar + slowness)
     // ------------------------------------------------------------------------
 
-    /**
-     * Repeating task that keeps each hunter's robot on top of them,
-     * and keeps the hunter invisible/non-collidable/invulnerable.
-     */
     private void startRobotSyncTask() {
         new BukkitRunnable() {
             @Override
@@ -240,26 +232,81 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                     if (!(e instanceof ArmorStand)) continue;
                     ArmorStand robot = (ArmorStand) e;
 
-                    // Sync robot to player position
+                    // Robot stays on top of the hunter's position
                     Location loc = hunter.getLocation().clone();
                     robot.teleport(loc);
 
-                    // Make hunter invisible / non-collidable / invulnerable
+                    // Hunter becomes invisible, non-collidable, invulnerable, and slower (robot feel)
                     hunter.setInvisible(true);
                     hunter.setCollidable(false);
                     hunter.setInvulnerable(true);
+                    if (!hunter.hasPotionEffect(PotionEffectType.SLOW)) {
+                        hunter.addPotionEffect(new PotionEffect(
+                                PotionEffectType.SLOW,
+                                Integer.MAX_VALUE,
+                                1, // Slowness II – slower than normal
+                                false, false, false
+                        ));
+                    }
 
                     // Update boss bar
                     BossBar bar = hunterBars.get(hunterId);
                     if (bar != null) {
-                        double hp = robotHealth.getOrDefault(hunterId, 20.0);
-                        double progress = Math.max(0.0, Math.min(1.0, hp / 20.0));
+                        double hp = robotHealth.getOrDefault(hunterId, ROBOT_MAX_HP);
+                        double progress = Math.max(0.0, Math.min(1.0, hp / ROBOT_MAX_HP));
                         bar.setProgress(progress);
-                        bar.setTitle(ChatColor.RED + "Robot Hunter HP: " + (int) Math.ceil(hp) + " / 20");
+                        bar.setTitle(ChatColor.RED + "Robot Hunter HP: " + (int) Math.ceil(hp) + " / " + (int) ROBOT_MAX_HP);
                     }
                 }
             }
         }.runTaskTimer(this, 1L, 1L);
+    }
+
+    // ------------------------------------------------------------------------
+    // COMPASS TASK (runner tracking)
+    // ------------------------------------------------------------------------
+
+    private void startCompassTask() {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (runnerId == null) return;
+
+                Player runner = Bukkit.getPlayer(runnerId);
+                if (runner == null || !runner.isOnline()) return;
+
+                for (UUID hunterId : hunters) {
+                    Player hunter = Bukkit.getPlayer(hunterId);
+                    if (hunter == null || !hunter.isOnline()) continue;
+
+                    // Ensure hunter has a compass
+                    ItemStack compass = null;
+                    int slotWithCompass = -1;
+                    for (int i = 0; i < hunter.getInventory().getSize(); i++) {
+                        ItemStack item = hunter.getInventory().getItem(i);
+                        if (item != null && item.getType() == Material.COMPASS) {
+                            compass = item;
+                            slotWithCompass = i;
+                            break;
+                        }
+                    }
+
+                    if (compass == null) {
+                        compass = new ItemStack(Material.COMPASS);
+                        hunter.getInventory().addItem(compass);
+                    }
+
+                    ItemMeta meta = compass.getItemMeta();
+                    if (meta instanceof CompassMeta) {
+                        CompassMeta cMeta = (CompassMeta) meta;
+                        cMeta.setDisplayName(ChatColor.AQUA + "Runner Tracker");
+                        cMeta.setLodestone(runner.getLocation());
+                        cMeta.setLodestoneTracked(false); // use custom lodestone position
+                        compass.setItemMeta(cMeta);
+                    }
+                }
+            }
+        }.runTaskTimer(this, 20L, 20L); // update every second
     }
 
     // ------------------------------------------------------------------------
@@ -274,7 +321,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }
 
         if (args.length == 0) {
-            sender.sendMessage(ChatColor.YELLOW + "Usage: /robothunter <sethunter|clearhunters|shop>");
+            sender.sendMessage(ChatColor.YELLOW + "Usage: /robothunter <sethunter|setrunner|clearhunters|shop>");
             return true;
         }
 
@@ -298,6 +345,21 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
             setHunter(target);
             sender.sendMessage(ChatColor.GREEN + "Set " + target.getName() + " as Robot Hunter.");
+            return true;
+        }
+
+        if (args[0].equalsIgnoreCase("setrunner")) {
+            if (args.length < 2) {
+                sender.sendMessage(ChatColor.YELLOW + "Usage: /robothunter setrunner <player>");
+                return true;
+            }
+            Player target = Bukkit.getPlayer(args[1]);
+            if (target == null) {
+                sender.sendMessage(ChatColor.RED + "Runner player not found.");
+                return true;
+            }
+            runnerId = target.getUniqueId();
+            sender.sendMessage(ChatColor.AQUA + "Runner set to " + target.getName() + ".");
             return true;
         }
 
@@ -333,31 +395,31 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             gameStartTime = System.currentTimeMillis();
         }
 
-        // Save spawn
         hunterSpawn.put(id, p.getLocation().clone());
-
-        // Remove existing robot if any
         removeRobot(id);
 
-        // Spawn new robot
         ArmorStand robot = spawnRobotArmorStand(p.getLocation());
         hunterRobot.put(id, robot.getUniqueId());
         robotOwner.put(robot.getUniqueId(), id);
 
-        // Init HP + boss bar
-        robotHealth.put(id, 20.0);
+        robotHealth.put(id, ROBOT_MAX_HP);
         BossBar bar = Bukkit.createBossBar(
-                ChatColor.RED + "Robot Hunter HP: 20 / 20",
+                ChatColor.RED + "Robot Hunter HP: " + (int) ROBOT_MAX_HP + " / " + (int) ROBOT_MAX_HP,
                 BarColor.RED,
                 BarStyle.SOLID
         );
         bar.addPlayer(p);
         hunterBars.put(id, bar);
 
-        // Hunter visibility / collision
         p.setInvisible(true);
         p.setCollidable(false);
         p.setInvulnerable(true);
+        p.addPotionEffect(new PotionEffect(
+                PotionEffectType.SLOW,
+                Integer.MAX_VALUE,
+                1,
+                false, false, false
+        ));
 
         p.sendMessage(ChatColor.AQUA + "You are now controlling the Robot Hunter!");
     }
@@ -372,9 +434,8 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             as.setVisible(true);
             as.setSmall(false);
             as.setGravity(true);
-            as.setCanTick(true);
-            
-            as.setInvulnerable(false); // allow robot to take damage
+            as.setInvulnerable(false); // allow damage events
+            as.setRemoveWhenFarAway(false);
         });
         return stand;
     }
@@ -397,6 +458,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 p.setInvisible(false);
                 p.setCollidable(true);
                 p.setInvulnerable(false);
+                p.removePotionEffect(PotionEffectType.SLOW);
             }
             removeRobot(id);
             BossBar bar = hunterBars.remove(id);
@@ -503,7 +565,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             if (reward == null) continue;
             Material m = reward.getType();
 
-            // Armor goes on robot AND player
+            // Armor only on robot
             if (m.name().endsWith("_HELMET")) {
                 robot.getEquipment().setHelmet(reward.clone());
             } else if (m.name().endsWith("_CHESTPLATE")) {
@@ -513,12 +575,10 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             } else if (m.name().endsWith("_BOOTS")) {
                 robot.getEquipment().setBoots(reward.clone());
             } else {
-                // Weapons: main hand if empty, otherwise just give to player
-                if (robot.getEquipment().getItemInMainHand() == null ||
-                        robot.getEquipment().getItemInMainHand().getType() == Material.AIR) {
+                // Weapons: main hand if empty, else ignore extra
+                ItemStack current = robot.getEquipment().getItemInMainHand();
+                if (current == null || current.getType() == Material.AIR) {
                     robot.getEquipment().setItemInMainHand(reward.clone());
-                } else {
-                    p.getInventory().addItem(reward.clone());
                 }
             }
         }
@@ -529,18 +589,20 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     @EventHandler
     public void onRobotDamage(EntityDamageEvent e) {
         Entity entity = e.getEntity();
+        if (!(entity instanceof ArmorStand)) return;
+
         UUID entityId = entity.getUniqueId();
         if (!robotOwner.containsKey(entityId)) return;
 
         UUID hunterId = robotOwner.get(entityId);
         if (!hunters.contains(hunterId)) return;
 
-        double current = robotHealth.getOrDefault(hunterId, 20.0);
+        double current = robotHealth.getOrDefault(hunterId, ROBOT_MAX_HP);
         double newHp = current - e.getFinalDamage();
         e.setCancelled(true); // handle damage ourselves
 
         if (newHp <= 0) {
-            robotHealth.put(hunterId, 20.0);
+            robotHealth.put(hunterId, ROBOT_MAX_HP);
             Player hunter = Bukkit.getPlayer(hunterId);
             Location spawn = hunterSpawn.getOrDefault(
                     hunterId,
@@ -565,23 +627,30 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         Player p = (Player) e.getDamager();
         if (!hunters.contains(p.getUniqueId())) return;
 
-        // Cancel normal damage and do our own raycast from robot
+        // Attack cooldown: prevent spam
+        long now = System.currentTimeMillis();
+        long last = lastAttackTime.getOrDefault(p.getUniqueId(), 0L);
+        if (now - last < ATTACK_COOLDOWN_MS) {
+            return;
+        }
+        lastAttackTime.put(p.getUniqueId(), now);
+
         e.setCancelled(true);
 
         UUID robotId = hunterRobot.get(p.getUniqueId());
         if (robotId == null) return;
-        Entity robot = Bukkit.getEntity(robotId);
-        if (robot == null) return;
+        Entity robotEntity = Bukkit.getEntity(robotId);
+        if (robotEntity == null) return;
 
-        Location eye = robot.getLocation().clone();
+        Location eye = robotEntity.getLocation().clone();
         Vector dir = eye.getDirection().normalize();
 
         Entity target = null;
         double bestDist = 3.0;
 
-        for (Entity nearby : robot.getNearbyEntities(3, 3, 3)) {
+        for (Entity nearby : robotEntity.getNearbyEntities(3, 3, 3)) {
             if (nearby instanceof Player && hunters.contains(nearby.getUniqueId())) {
-                // Don’t hit other hunters / yourself
+                // Don't hit other robot hunters / yourself
                 continue;
             }
             if (!(nearby instanceof LivingEntity)) continue;
@@ -590,7 +659,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             double proj = to.dot(dir);
             if (proj < 0 || proj > 3) continue;
 
-            // Distance from line
             Vector closest = eye.toVector().add(dir.clone().multiply(proj));
             double dist = closest.distance(nearby.getLocation().toVector());
             if (dist <= 1.5 && proj < bestDist) {
@@ -601,15 +669,21 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
         if (target instanceof LivingEntity) {
             LivingEntity le = (LivingEntity) target;
-            double damage = 4.0; // base
 
-            ItemStack weapon = robot.getEquipment().getItemInMainHand();
-            if (weapon != null) {
-                String name = weapon.getType().name();
-                if (name.contains("WOODEN_SWORD")) damage = 4.0;
-                else if (name.contains("STONE_SWORD")) damage = 5.0;
-                else if (name.contains("IRON_SWORD")) damage = 6.0;
-                else if (name.contains("DIAMOND_SWORD")) damage = 7.0;
+            // Base damage a bit higher than normal
+            double damage = 5.0;
+
+            if (robotEntity instanceof ArmorStand) {
+                ArmorStand robot = (ArmorStand) robotEntity;
+                ItemStack weapon = robot.getEquipment().getItemInMainHand();
+                if (weapon != null) {
+                    String name = weapon.getType().name();
+                    // Make robot hit harder with each tier
+                    if (name.contains("WOODEN_SWORD")) damage = 6.0;
+                    else if (name.contains("STONE_SWORD")) damage = 7.0;
+                    else if (name.contains("IRON_SWORD")) damage = 8.0;
+                    else if (name.contains("DIAMOND_SWORD")) damage = 9.0;
+                }
             }
 
             le.damage(damage, p);
@@ -633,6 +707,11 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         UUID id = e.getPlayer().getUniqueId();
         if (!hunters.contains(id)) return;
 
+        e.getPlayer().setInvisible(false);
+        e.getPlayer().setCollidable(true);
+        e.getPlayer().setInvulnerable(false);
+        e.getPlayer().removePotionEffect(PotionEffectType.SLOW);
+
         removeRobot(id);
         BossBar bar = hunterBars.remove(id);
         if (bar != null) {
@@ -640,6 +719,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }
         robotHealth.remove(id);
         hunters.remove(id);
+        lastAttackTime.remove(id);
     }
 
     // ------------------------------------------------------------------------
@@ -651,12 +731,12 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         if (!sender.hasPermission("robothunter.use")) return Collections.emptyList();
 
         if (args.length == 1) {
-            return Arrays.asList("sethunter", "clearhunters", "shop").stream()
+            return Arrays.asList("sethunter", "setrunner", "clearhunters", "shop").stream()
                     .filter(s -> s.toLowerCase().startsWith(args[0].toLowerCase()))
                     .collect(Collectors.toList());
         }
 
-        if (args.length == 2 && args[0].equalsIgnoreCase("sethunter")) {
+        if (args.length == 2 && (args[0].equalsIgnoreCase("sethunter") || args[0].equalsIgnoreCase("setrunner"))) {
             return Bukkit.getOnlinePlayers().stream()
                     .map(Player::getName)
                     .filter(n -> n.toLowerCase().startsWith(args[1].toLowerCase()))
