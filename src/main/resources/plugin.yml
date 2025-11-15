@@ -3,11 +3,13 @@ main: me.danyul.robot.PlayerControlledRobotHunterPlugin
 version: 1.0.0
 api-version: 1.21
 author: Danyul
+
 commands:
   robothunter:
     description: Robot hunter commands
-    usage: /robothunter <sethunter|clearhunters|shop>
+    usage: /robothunter <sethunter|setrunner|clearhunters|shop>
     permission: robothunter.use
+
 permissions:
   robothunter.use:
     description: Use robot hunter commands
