@@ -1,12 +1,17 @@
 package me.danyul.robot;
 
-import org.bukkit.*;
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.Color;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.Particle;
+import org.bukkit.Sound;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.enchantments.Enchantment;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -39,7 +44,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     private final Set<UUID> hunters = new HashSet<>();
     // Hunter original spawn location
     private final Map<UUID, Location> hunterSpawn = new HashMap<>();
-    // Last attack times (for cooldown)
+    // Last attack times (for melee cooldown)
     private final Map<UUID, Long> lastAttackTime = new HashMap<>();
 
     // When the game started (ms since epoch)
@@ -110,11 +115,11 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 70
         ),
         GRAPPLE(
-                "grapple",
-                ChatColor.DARK_PURPLE + "Grapple Pull",
-                Material.FISHING_ROD,
-                1020,  // 17 min
-                60
+            "grapple",
+            ChatColor.DARK_PURPLE + "Grapple Pull",
+            Material.FISHING_ROD,
+            1020,  // 17 min
+            60
         ),
         DRONE_STRIKE(
                 "drone_strike",
@@ -251,9 +256,8 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         CompassMeta cMeta = (CompassMeta) meta;
                         cMeta.setDisplayName(ChatColor.AQUA + "Runner Tracker");
                         cMeta.setLodestone(runner.getLocation());
-                        cMeta.setLodestoneTracked(false); // use custom lodestone position
+                        cMeta.setLodestoneTracked(false); // custom position
 
-                        // Make compass look enchanted/glowing in a version-safe way
                         Enchantment glow = Enchantment.getByName("UNBREAKING");
                         if (glow != null) {
                             cMeta.addEnchant(glow, 1, true);
@@ -286,7 +290,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                     if (mine.loc.distanceSquared(runner.getLocation()) <= 1.5 * 1.5) {
                         // Trigger mine
                         runner.getWorld().playSound(mine.loc, Sound.ENTITY_CREEPER_PRIMED, 1f, 1.2f);
-                        runner.getWorld().spawnParticle(Particle.ELECTRIC_SPARK, mine.loc, 25, 0.5, 0.5, 0.5, 0);
+                        runner.getWorld().spawnParticle(Particle.CRIT_MAGIC, mine.loc, 35, 0.5, 0.5, 0.5, 0.1);
                         runner.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, 60, 1, false, true, true));
                         runner.damage(2.0); // one heart
                         it.remove();
@@ -579,7 +583,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         runner.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, 20 * 5, 0, false, false, true));
                         hunter.sendTitle(ChatColor.BLUE + "SONAR PING", ChatColor.GRAY + "Runner detected!", 5, 40, 10);
                         hunter.getWorld().playSound(loc, Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 0.5f);
-                        hunter.getWorld().spawnParticle(Particle.SONIC_BOOM, loc, 1, 0, 0, 0, 0);
+                        hunter.getWorld().spawnParticle(Particle.END_ROD, loc, 30, 0.4, 0.4, 0.4, 0.01);
                     } else {
                         hunter.sendMessage(ChatColor.RED + "Runner not online.");
                         return false;
@@ -597,9 +601,17 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                     double dz = (Math.random() - 0.5) * 3.0;
                     Location mLoc = loc.clone().add(dx, 0, dz);
                     mLoc.setY(loc.getY());
-                    mines.add(new Mine(mLoc, hunterId));
-                    hunter.getWorld().spawnParticle(Particle.REDSTONE, mLoc.add(0, 0.1, 0), 8, 0.2, 0.1, 0.2,
-                            new Particle.DustOptions(Color.RED, 1));
+                    Mine mine = new Mine(mLoc, hunterId);
+                    mines.add(mine);
+                    hunter.getWorld().spawnParticle(
+                            Particle.REDSTONE,
+                            mLoc.add(0, 0.1, 0),
+                            8,
+                            0.2,
+                            0.1,
+                            0.2,
+                            new Particle.DustOptions(Color.RED, 1)
+                    );
                 }
                 hunter.getWorld().playSound(loc, Sound.BLOCK_PISTON_EXTEND, 1f, 0.8f);
                 hunter.sendTitle(ChatColor.GOLD + "MINES DEPLOYED", ChatColor.GRAY + "Careful where they step...", 5, 40, 10);
@@ -610,7 +622,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 hunter.addPotionEffect(new PotionEffect(PotionEffectType.DAMAGE_RESISTANCE, 20 * 5, 1, false, true, true));
                 hunter.sendTitle(ChatColor.DARK_AQUA + "SHIELD ONLINE", ChatColor.GRAY + "Damage reduced.", 5, 40, 10);
                 hunter.getWorld().playSound(loc, Sound.ITEM_SHIELD_BLOCK, 1f, 0.8f);
-                hunter.getWorld().spawnParticle(Particle.SPELL_INSTANT, loc, 20, 0.5, 1, 0.5, 0.1);
+                hunter.getWorld().spawnParticle(Particle.SPELL_WITCH, loc, 20, 0.5, 1, 0.5, 0.1);
                 new BukkitRunnable() {
                     @Override
                     public void run() {
@@ -685,7 +697,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         new BukkitRunnable() {
                             @Override
                             public void run() {
-                                target.getWorld().spawnParticle(Particle.EXPLOSION_LARGE, target, 1, 0, 0, 0, 0);
+                                target.getWorld().spawnParticle(Particle.EXPLOSION_NORMAL, target, 1);
                                 target.getWorld().playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 1f, 1f);
                                 target.getWorld().createExplosion(target.getX(), target.getY(), target.getZ(), 1.5f, false, false);
                             }
@@ -765,10 +777,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             else damage += 1.0; // fists or random item
         } else {
             damage += 1.0;
-        }
-
-        if (shieldActive.contains(hunter.getUniqueId())) {
-            // just for flavor; doesn't change outgoing damage
         }
 
         e.setDamage(damage);
