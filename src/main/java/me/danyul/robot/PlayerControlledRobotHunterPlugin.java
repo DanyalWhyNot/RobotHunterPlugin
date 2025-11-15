@@ -1,26 +1,16 @@
 package me.danyul.robot;
 
-import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
-import org.bukkit.Location;
-import org.bukkit.Material;
-import org.bukkit.Sound;
-import org.bukkit.World;
-import org.bukkit.boss.BarColor;
-import org.bukkit.boss.BarStyle;
-import org.bukkit.boss.BossBar;
+import org.bukkit.*;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.enchantments.Enchantment;
-import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
-import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.FoodLevelChangeEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -40,28 +30,17 @@ import java.util.stream.Collectors;
 
 public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
 
-    private static final String SHOP_TITLE = ChatColor.DARK_AQUA + "Robot Hunter Shop";
+    private static final String ABILITY_GUI_TITLE = ChatColor.DARK_RED + "Robot Abilities";
 
-    // Robot max HP: 30.0 = 15 hearts
-    private static final double ROBOT_MAX_HP = 30.0;
-
-    // Attack cooldown so robot can’t spam hits (ms)
+    // Attack cooldown so hunter can’t spam hits (ms)
     private static final long ATTACK_COOLDOWN_MS = 600L;
 
     // Active hunters (supports MULTIPLE hunters)
     private final Set<UUID> hunters = new HashSet<>();
-    // Hunter -> robot armor stand UUID
-    private final Map<UUID, UUID> hunterRobot = new HashMap<>();
-    // Robot entity -> hunter UUID
-    private final Map<UUID, UUID> robotOwner = new HashMap<>();
     // Hunter original spawn location
     private final Map<UUID, Location> hunterSpawn = new HashMap<>();
-    // Robot HP tracking
-    private final Map<UUID, Double> robotHealth = new HashMap<>();
     // Last attack times (for cooldown)
     private final Map<UUID, Long> lastAttackTime = new HashMap<>();
-    // Hunter -> bossbar showing robot HP
-    private final Map<UUID, BossBar> hunterBars = new HashMap<>();
 
     // When the game started (ms since epoch)
     private long gameStartTime = -1L;
@@ -69,214 +48,170 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     // Current runner (speedrunner) for compass tracking
     private UUID runnerId = null;
 
-    // Shop item definition
-    private static class ShopItem {
-        final Material icon;
-        final String name;
-        final long unlockSeconds;
-        final List<String> lore;
-        final List<ItemStack> rewards;
+    // Hunters in "camera" mode
+    private final Set<UUID> cameraMode = new HashSet<>();
+    // Hunters with overdrive active (no slowness during this)
+    private final Set<UUID> overdriveActive = new HashSet<>();
+    // Hunters with shield active (reduced damage taken)
+    private final Set<UUID> shieldActive = new HashSet<>();
 
-        ShopItem(Material icon, String name, long unlockSeconds, List<String> lore, List<ItemStack> rewards) {
+    // ------------------------------------------------------------------------
+    // ABILITIES
+    // ------------------------------------------------------------------------
+
+    private enum Ability {
+        SPEED_OVERDRIVE(
+                "speed_overdrive",
+                ChatColor.GREEN + "Speed Overdrive",
+                Material.SUGAR,
+                300,   // 5 min
+                45
+        ),
+        ROCKET_JUMP(
+                "rocket_jump",
+                ChatColor.AQUA + "Rocket Jump",
+                Material.FIRE_CHARGE,
+                360,   // 6 min
+                45
+        ),
+        ZOOM_MODE(
+                "zoom_mode",
+                ChatColor.YELLOW + "Zoom Mode",
+                Material.SPYGLASS,
+                420,   // 7 min
+                30
+        ),
+        SONAR_SCAN(
+                "sonar_scan",
+                ChatColor.BLUE + "Sonar Scan",
+                Material.NAUTILUS_SHELL,
+                480,   // 8 min
+                60
+        ),
+        MINES(
+                "mines",
+                ChatColor.GOLD + "Shock Mines",
+                Material.TNT,
+                600,   // 10 min
+                90
+        ),
+        SHIELD(
+                "shield",
+                ChatColor.DARK_AQUA + "Shield Mode",
+                Material.SHIELD,
+                720,   // 12 min
+                60
+        ),
+        SECURITY_CAMERA(
+                "security_camera",
+                ChatColor.DARK_GREEN + "Security Camera",
+                Material.ENDER_EYE,
+                900,   // 15 min
+                70
+        ),
+        GRAPPLE(
+                "grapple",
+                ChatColor.DARK_PURPLE + "Grapple Pull",
+                Material.FISHING_ROD,
+                1020,  // 17 min
+                60
+        ),
+        DRONE_STRIKE(
+                "drone_strike",
+                ChatColor.RED + "Drone Strike",
+                Material.FIREWORK_ROCKET,
+                1200,  // 20 min
+                90
+        ),
+        THERMAL_VISION(
+                "thermal_vision",
+                ChatColor.LIGHT_PURPLE + "Thermal Vision",
+                Material.MAGMA_CREAM,
+                1320,  // 22 min
+                90
+        );
+
+        final String key;
+        final String displayName;
+        final Material icon;
+        final int defaultUnlockSeconds;
+        final int defaultCooldownSeconds;
+
+        Ability(String key, String displayName, Material icon, int defaultUnlockSeconds, int defaultCooldownSeconds) {
+            this.key = key;
+            this.displayName = displayName;
             this.icon = icon;
-            this.name = name;
-            this.unlockSeconds = unlockSeconds;
-            this.lore = lore;
-            this.rewards = rewards;
+            this.defaultUnlockSeconds = defaultUnlockSeconds;
+            this.defaultCooldownSeconds = defaultCooldownSeconds;
         }
     }
 
-    private final List<ShopItem> shopItems = new ArrayList<>();
+    // Configurable unlocks & cooldowns
+    private final Map<Ability, Integer> abilityUnlockSeconds = new EnumMap<>(Ability.class);
+    private final Map<Ability, Integer> abilityCooldownSeconds = new EnumMap<>(Ability.class);
+    // Per-hunter last used time (seconds since epoch)
+    private final Map<UUID, EnumMap<Ability, Long>> lastAbilityUse = new HashMap<>();
+
+    // ------------------------------------------------------------------------
+    // MINES
+    // ------------------------------------------------------------------------
+
+    private static class Mine {
+        final Location loc;
+        final UUID ownerId;
+
+        Mine(Location loc, UUID ownerId) {
+            this.loc = loc;
+            this.ownerId = ownerId;
+        }
+    }
+
+    private final List<Mine> mines = new ArrayList<>();
+
+    // ------------------------------------------------------------------------
+    // ENABLE / DISABLE
+    // ------------------------------------------------------------------------
 
     @Override
     public void onEnable() {
+        saveDefaultConfig();
+        loadAbilityConfig();
+
         getServer().getPluginManager().registerEvents(this, this);
         Objects.requireNonNull(getCommand("robothunter")).setExecutor(this);
         Objects.requireNonNull(getCommand("robothunter")).setTabCompleter(this);
 
-        setupShopItems();
-        startRobotSyncTask();
         startCompassTask();
+        startMineCheckTask();
 
-        getLogger().info("PlayerControlledRobotHunter enabled.");
+        getLogger().info("PlayerControlledRobotHunter (player-only) enabled.");
     }
 
     @Override
     public void onDisable() {
-        // Clean up robots and bossbars on disable
-        for (UUID robotId : new HashSet<>(robotOwner.keySet())) {
-            Entity e = Bukkit.getEntity(robotId);
-            if (e != null) {
-                e.remove();
-            }
-        }
-        robotOwner.clear();
-        hunterRobot.clear();
-
-        for (BossBar bar : hunterBars.values()) {
-            bar.removeAll();
-        }
-        hunterBars.clear();
-
         getLogger().info("PlayerControlledRobotHunter disabled.");
     }
 
     // ------------------------------------------------------------------------
-    // SHOP SETUP
+    // CONFIG LOADING
     // ------------------------------------------------------------------------
 
-    private void setupShopItems() {
-        // Wooden kit (0s)
-        shopItems.add(new ShopItem(
-                Material.WOODEN_SWORD,
-                ChatColor.GREEN + "Wooden Kit",
-                0,
-                Arrays.asList(
-                        ChatColor.GRAY + "Instant unlock.",
-                        ChatColor.YELLOW + "Includes:",
-                        ChatColor.GRAY + "- Wooden sword & axe",
-                        ChatColor.GRAY + "- Leather armor",
-                        ChatColor.GRAY + "- Blocks & utility items"
-                ),
-                kitWithExtras(
-                        new ItemStack(Material.WOODEN_SWORD),
-                        new ItemStack(Material.WOODEN_AXE),
-                        new ItemStack(Material.LEATHER_HELMET),
-                        new ItemStack(Material.LEATHER_CHESTPLATE),
-                        new ItemStack(Material.LEATHER_LEGGINGS),
-                        new ItemStack(Material.LEATHER_BOOTS)
-                )
-        ));
+    private void loadAbilityConfig() {
+        for (Ability ability : Ability.values()) {
+            int unlock = getConfig().getInt(
+                    "abilities." + ability.key + ".unlock_seconds",
+                    ability.defaultUnlockSeconds
+            );
+            int cooldown = getConfig().getInt(
+                    "abilities." + ability.key + ".cooldown_seconds",
+                    ability.defaultCooldownSeconds
+            );
+            // Make sure nothing unlocks before 5 minutes (300s)
+            if (unlock < 300) unlock = 300;
 
-        // Stone kit (600s / 10 min)
-        shopItems.add(new ShopItem(
-                Material.STONE_SWORD,
-                ChatColor.AQUA + "Stone Kit",
-                600,
-                Arrays.asList(
-                        ChatColor.GRAY + "Unlocks after 10 minutes.",
-                        ChatColor.YELLOW + "Includes:",
-                        ChatColor.GRAY + "- Stone sword & axe",
-                        ChatColor.GRAY + "- Chainmail armor",
-                        ChatColor.GRAY + "- Blocks & utility items"
-                ),
-                kitWithExtras(
-                        new ItemStack(Material.STONE_SWORD),
-                        new ItemStack(Material.STONE_AXE),
-                        new ItemStack(Material.CHAINMAIL_HELMET),
-                        new ItemStack(Material.CHAINMAIL_CHESTPLATE),
-                        new ItemStack(Material.CHAINMAIL_LEGGINGS),
-                        new ItemStack(Material.CHAINMAIL_BOOTS)
-                )
-        ));
-
-        // Iron kit (2400s / 40 min)
-        shopItems.add(new ShopItem(
-                Material.IRON_SWORD,
-                ChatColor.WHITE + "Iron Kit",
-                2400,
-                Arrays.asList(
-                        ChatColor.GRAY + "Unlocks after 40 minutes.",
-                        ChatColor.YELLOW + "Includes:",
-                        ChatColor.GRAY + "- Iron sword & axe",
-                        ChatColor.GRAY + "- Full iron armor",
-                        ChatColor.GRAY + "- Blocks & utility items"
-                ),
-                kitWithExtras(
-                        new ItemStack(Material.IRON_SWORD),
-                        new ItemStack(Material.IRON_AXE),
-                        new ItemStack(Material.IRON_HELMET),
-                        new ItemStack(Material.IRON_CHESTPLATE),
-                        new ItemStack(Material.IRON_LEGGINGS),
-                        new ItemStack(Material.IRON_BOOTS)
-                )
-        ));
-
-        // Diamond kit (3600s / 60 min)
-        shopItems.add(new ShopItem(
-                Material.DIAMOND_SWORD,
-                ChatColor.BLUE + "Diamond Kit",
-                3600,
-                Arrays.asList(
-                        ChatColor.GRAY + "Unlocks after 60 minutes.",
-                        ChatColor.YELLOW + "Includes:",
-                        ChatColor.GRAY + "- Diamond sword & axe",
-                        ChatColor.GRAY + "- Full diamond armor",
-                        ChatColor.GRAY + "- Blocks & utility items"
-                ),
-                kitWithExtras(
-                        new ItemStack(Material.DIAMOND_SWORD),
-                        new ItemStack(Material.DIAMOND_AXE),
-                        new ItemStack(Material.DIAMOND_HELMET),
-                        new ItemStack(Material.DIAMOND_CHESTPLATE),
-                        new ItemStack(Material.DIAMOND_LEGGINGS),
-                        new ItemStack(Material.DIAMOND_BOOTS)
-                )
-        ));
-    }
-
-    // Common extras added to EVERY kit (blocks & utility, no food)
-    private List<ItemStack> getCommonExtras() {
-        List<ItemStack> extras = new ArrayList<>();
-        extras.add(new ItemStack(Material.COBBLESTONE, 64));
-        extras.add(new ItemStack(Material.COBBLESTONE, 64));
-        extras.add(new ItemStack(Material.OAK_PLANKS, 64));
-        extras.add(new ItemStack(Material.OAK_PLANKS, 64));
-        extras.add(new ItemStack(Material.LADDER, 32));
-        extras.add(new ItemStack(Material.WATER_BUCKET, 1));
-        extras.add(new ItemStack(Material.LAVA_BUCKET, 1));
-        extras.add(new ItemStack(Material.SHIELD, 1));
-        extras.add(new ItemStack(Material.ENDER_PEARL, 4));
-        return extras;
-    }
-
-    // Helper to merge base kit items + extras
-    private List<ItemStack> kitWithExtras(ItemStack... base) {
-        List<ItemStack> result = new ArrayList<>(Arrays.asList(base));
-        result.addAll(getCommonExtras());
-        return result;
-    }
-
-    // ------------------------------------------------------------------------
-    // ROBOT SYNC (position + slowness + invis)
-    // ------------------------------------------------------------------------
-
-    private void startRobotSyncTask() {
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                for (UUID hunterId : hunters) {
-                    Player hunter = Bukkit.getPlayer(hunterId);
-                    if (hunter == null || !hunter.isOnline()) {
-                        continue;
-                    }
-
-                    UUID robotId = hunterRobot.get(hunterId);
-                    if (robotId == null) continue;
-
-                    Entity e = Bukkit.getEntity(robotId);
-                    if (!(e instanceof ArmorStand)) continue;
-                    ArmorStand robot = (ArmorStand) e;
-
-                    // Robot stays on top of the hunter's position
-                    Location loc = hunter.getLocation().clone();
-                    robot.teleport(loc);
-
-                    // Hunter becomes invisible, non-collidable, and slow
-                    hunter.setInvisible(true);
-                    hunter.setCollidable(false);
-                    hunter.setInvulnerable(false); // allow damage events so we can redirect fall dmg
-                    if (!hunter.hasPotionEffect(PotionEffectType.SLOWNESS)) {
-                        hunter.addPotionEffect(new PotionEffect(
-                                PotionEffectType.SLOWNESS,
-                                Integer.MAX_VALUE,
-                                0, // Slowness I
-                                false, false, false
-                        ));
-                    }
-                }
-            }
-        }.runTaskTimer(this, 1L, 1L);
+            abilityUnlockSeconds.put(ability, unlock);
+            abilityCooldownSeconds.put(ability, cooldown);
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -333,6 +268,35 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     }
 
     // ------------------------------------------------------------------------
+    // MINES CHECK TASK
+    // ------------------------------------------------------------------------
+
+    private void startMineCheckTask() {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (runnerId == null) return;
+                Player runner = Bukkit.getPlayer(runnerId);
+                if (runner == null || !runner.isOnline()) return;
+
+                Iterator<Mine> it = mines.iterator();
+                while (it.hasNext()) {
+                    Mine mine = it.next();
+                    if (!mine.loc.getWorld().equals(runner.getWorld())) continue;
+                    if (mine.loc.distanceSquared(runner.getLocation()) <= 1.5 * 1.5) {
+                        // Trigger mine
+                        runner.getWorld().playSound(mine.loc, Sound.ENTITY_CREEPER_PRIMED, 1f, 1.2f);
+                        runner.getWorld().spawnParticle(Particle.ELECTRIC_SPARK, mine.loc, 25, 0.5, 0.5, 0.5, 0);
+                        runner.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, 60, 1, false, true, true));
+                        runner.damage(2.0); // one heart
+                        it.remove();
+                    }
+                }
+            }
+        }.runTaskTimer(this, 5L, 5L);
+    }
+
+    // ------------------------------------------------------------------------
     // COMMANDS
     // ------------------------------------------------------------------------
 
@@ -344,7 +308,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }
 
         if (args.length == 0) {
-            sender.sendMessage(ChatColor.YELLOW + "Usage: /robothunter <sethunter|setrunner|clearhunters|shop>");
+            sender.sendMessage(ChatColor.YELLOW + "Usage: /robothunter <sethunter|setrunner|clearhunters|abilities>");
             return true;
         }
 
@@ -392,9 +356,9 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             return true;
         }
 
-        if (args[0].equalsIgnoreCase("shop")) {
+        if (args[0].equalsIgnoreCase("abilities")) {
             if (!(sender instanceof Player)) {
-                sender.sendMessage(ChatColor.RED + "Only players can use the shop.");
+                sender.sendMessage(ChatColor.RED + "Only players can use abilities.");
                 return true;
             }
             Player p = (Player) sender;
@@ -402,7 +366,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 p.sendMessage(ChatColor.RED + "You are not a robot hunter.");
                 return true;
             }
-            openShop(p);
+            openAbilityGui(p);
             return true;
         }
 
@@ -419,119 +383,73 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }
 
         hunterSpawn.put(id, p.getLocation().clone());
-        removeRobot(id);
 
-        ArmorStand robot = spawnRobotArmorStand(p.getLocation());
-        hunterRobot.put(id, robot.getUniqueId());
-        robotOwner.put(robot.getUniqueId(), id);
-
-        robotHealth.put(id, ROBOT_MAX_HP);
-
-        // Create / update bossbar for this hunter
-        BossBar bar = hunterBars.get(id);
-        if (bar == null) {
-            bar = Bukkit.createBossBar(ChatColor.RED + "Robot HP", BarColor.RED, BarStyle.SOLID);
-            hunterBars.put(id, bar);
-        }
-        bar.removeAll();
-        bar.addPlayer(p);
-        bar.setVisible(true);
-        updateBossBar(id); // show full hearts at start
-
-        p.setInvisible(true);
-        p.setCollidable(false);
-        p.setInvulnerable(false); // allow damage events
+        // Robot “feel”: slow + no hunger
         p.addPotionEffect(new PotionEffect(
                 PotionEffectType.SLOWNESS,
                 Integer.MAX_VALUE,
-                0, // Slowness I
+                0,
                 false, false, false
         ));
-
-        p.sendMessage(ChatColor.AQUA + "You are now controlling the Robot Hunter!");
-    }
-
-    private ArmorStand spawnRobotArmorStand(Location loc) {
-        World w = loc.getWorld();
-        ArmorStand stand = w.spawn(loc, ArmorStand.class, as -> {
-            as.setCustomName(ChatColor.RED + "Robot Hunter");
-            as.setCustomNameVisible(true);
-            as.setArms(true);
-            as.setBasePlate(false);
-            as.setVisible(true);
-            as.setSmall(false);
-            as.setGravity(true);
-            as.setInvulnerable(false); // allow damage events
-            as.setRemoveWhenFarAway(false);
-        });
-
-        // Make it look more "robot" with a skeleton head
-        stand.getEquipment().setHelmet(new ItemStack(Material.SKELETON_SKULL));
-
-        return stand;
-    }
-
-    private void removeRobot(UUID hunterId) {
-        UUID robotId = hunterRobot.remove(hunterId);
-        if (robotId != null) {
-            robotOwner.remove(robotId);
-            Entity e = Bukkit.getEntity(robotId);
-            if (e != null) {
-                e.remove();
-            }
-        }
-        robotHealth.remove(hunterId);
-
-        BossBar bar = hunterBars.get(hunterId);
-        if (bar != null) {
-            // keep bar attached but show as empty
-            bar.setProgress(0.0);
-            bar.setTitle(ChatColor.RED + "Robot HP " + ChatColor.DARK_GRAY + "❤❤❤❤❤❤❤❤❤❤❤❤❤❤❤");
-        }
+        p.sendTitle(ChatColor.RED + "ROBOT ONLINE", ChatColor.GRAY + "You are the hunter.", 10, 40, 10);
+        p.sendMessage(ChatColor.AQUA + "You are now the Robot Hunter!");
     }
 
     private void clearAllHunters() {
         for (UUID id : new HashSet<>(hunters)) {
             Player p = Bukkit.getPlayer(id);
             if (p != null) {
-                p.setInvisible(false);
-                p.setCollidable(true);
-                p.setInvulnerable(false);
                 p.removePotionEffect(PotionEffectType.SLOWNESS);
+                p.removePotionEffect(PotionEffectType.SPEED);
+                p.removePotionEffect(PotionEffectType.NIGHT_VISION);
+                p.removePotionEffect(PotionEffectType.DAMAGE_RESISTANCE);
             }
-            removeRobot(id);
             lastAttackTime.remove(id);
-
-            BossBar bar = hunterBars.get(id);
-            if (bar != null) {
-                bar.removeAll();
-            }
+            cameraMode.remove(id);
+            overdriveActive.remove(id);
+            shieldActive.remove(id);
         }
         hunters.clear();
     }
 
-    private void openShop(Player p) {
-        Inventory inv = Bukkit.createInventory(p, 9, SHOP_TITLE);
+    // ------------------------------------------------------------------------
+    // ABILITY GUI
+    // ------------------------------------------------------------------------
+
+    private void openAbilityGui(Player p) {
+        Inventory inv = Bukkit.createInventory(p, 9, ABILITY_GUI_TITLE);
 
         long elapsed = (gameStartTime == -1L)
                 ? 0
                 : (System.currentTimeMillis() - gameStartTime) / 1000L;
 
-        for (int i = 0; i < shopItems.size() && i < 9; i++) {
-            ShopItem si = shopItems.get(i);
-            ItemStack item = new ItemStack(si.icon);
+        Ability[] abilities = Ability.values();
+        for (int i = 0; i < abilities.length && i < inv.getSize(); i++) {
+            Ability ability = abilities[i];
+            ItemStack item = new ItemStack(ability.icon);
             ItemMeta meta = item.getItemMeta();
             if (meta != null) {
-                meta.setDisplayName(si.name);
+                meta.setDisplayName(ability.displayName);
 
-                List<String> lore = new ArrayList<>(si.lore);
-                if (elapsed >= si.unlockSeconds) {
-                    lore.add(ChatColor.GREEN + "Unlocked!");
-                    lore.add(ChatColor.GRAY + "Click to apply to robot.");
+                List<String> lore = new ArrayList<>();
+                int unlock = abilityUnlockSeconds.getOrDefault(ability, ability.defaultUnlockSeconds);
+                int cooldown = abilityCooldownSeconds.getOrDefault(ability, ability.defaultCooldownSeconds);
+
+                if (elapsed >= unlock) {
+                    long nowSec = System.currentTimeMillis() / 1000L;
+                    long last = getLastAbilityUse(p.getUniqueId(), ability);
+                    long remainingCd = (last == 0L) ? 0L : (cooldown - (nowSec - last));
+                    if (remainingCd <= 0) {
+                        lore.add(ChatColor.GREEN + "Ready!");
+                        lore.add(ChatColor.GRAY + "Cooldown: " + cooldown + "s");
+                    } else {
+                        lore.add(ChatColor.RED + "Cooldown: " + remainingCd + "s remaining");
+                    }
                 } else {
-                    long remaining = si.unlockSeconds - elapsed;
-                    lore.add(ChatColor.RED + "Locked: " + remaining + "s remaining.");
+                    long remainingUnlock = unlock - elapsed;
+                    lore.add(ChatColor.RED + "Locked: " + remainingUnlock + "s until unlock");
                 }
+
                 meta.setLore(lore);
                 item.setItemMeta(meta);
             }
@@ -541,65 +459,267 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         p.openInventory(inv);
     }
 
-    // ------------------------------------------------------------------------
-    // DAMAGE HELPER (robot HP + bossbar)
-    // ------------------------------------------------------------------------
-
-    private void updateBossBar(UUID hunterId) {
-        BossBar bar = hunterBars.get(hunterId);
-        if (bar == null) return;
-
-        double hp = robotHealth.getOrDefault(hunterId, ROBOT_MAX_HP);
-        double progress = Math.max(0.0, Math.min(1.0, hp / ROBOT_MAX_HP));
-        int hearts = (int) Math.ceil(hp / 2.0); // 2 HP per heart
-        if (hearts < 0) hearts = 0;
-        if (hearts > 15) hearts = 15;
-
-        int maxHearts = 15;
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < maxHearts; i++) {
-            if (i < hearts) {
-                sb.append(ChatColor.WHITE).append("❤");      // filled heart
-            } else {
-                sb.append(ChatColor.DARK_GRAY).append("❤");  // empty heart
-            }
-        }
-
-        bar.setProgress(progress);
-        bar.setTitle(ChatColor.RED + "Robot HP " + sb);
-        bar.setVisible(true);
+    private long getLastAbilityUse(UUID hunterId, Ability ability) {
+        EnumMap<Ability, Long> map = lastAbilityUse.get(hunterId);
+        if (map == null) return 0L;
+        return map.getOrDefault(ability, 0L);
     }
 
-    private void applyRobotDamage(UUID hunterId, Entity robotEntity, double amount) {
-        double current = robotHealth.getOrDefault(hunterId, ROBOT_MAX_HP);
-        double newHp = current - amount;
+    private void setLastAbilityUse(UUID hunterId, Ability ability, long whenSec) {
+        EnumMap<Ability, Long> map = lastAbilityUse.computeIfAbsent(hunterId, k -> new EnumMap<>(Ability.class));
+        map.put(ability, whenSec);
+    }
 
-        if (newHp <= 0) {
-            robotHealth.put(hunterId, ROBOT_MAX_HP);
-            Player hunter = Bukkit.getPlayer(hunterId);
-            Location spawn = hunterSpawn.getOrDefault(
-                    hunterId,
-                    robotEntity.getWorld().getSpawnLocation()
-            );
+    // ------------------------------------------------------------------------
+    // INVENTORY CLICKS (ABILITY GUI)
+    // ------------------------------------------------------------------------
 
-            if (hunter != null) {
-                hunter.sendMessage(ChatColor.RED + "Your robot died! Respawning at original spawn.");
-                hunter.teleport(spawn);
-            }
+    @EventHandler
+    public void onInventoryClick(InventoryClickEvent e) {
+        if (!(e.getWhoClicked() instanceof Player)) return;
+        Player p = (Player) e.getWhoClicked();
+        if (!hunters.contains(p.getUniqueId())) return;
 
-            robotEntity.teleport(spawn);
-        } else {
-            robotHealth.put(hunterId, newHp);
+        String title = e.getView().getTitle();
+        if (!title.equals(ABILITY_GUI_TITLE)) return;
+
+        e.setCancelled(true);
+        ItemStack clicked = e.getCurrentItem();
+        if (clicked == null || !clicked.hasItemMeta()) return;
+        ItemMeta meta = clicked.getItemMeta();
+        if (meta == null || meta.getDisplayName() == null) return;
+
+        handleAbilityClick(p, meta.getDisplayName());
+    }
+
+    private void handleAbilityClick(Player p, String displayName) {
+        UUID hunterId = p.getUniqueId();
+
+        Ability ability = Arrays.stream(Ability.values())
+                .filter(a -> a.displayName.equals(displayName))
+                .findFirst()
+                .orElse(null);
+        if (ability == null) return;
+
+        long elapsed = (gameStartTime == -1L)
+                ? 0
+                : (System.currentTimeMillis() - gameStartTime) / 1000L;
+
+        int unlock = abilityUnlockSeconds.getOrDefault(ability, ability.defaultUnlockSeconds);
+        if (elapsed < unlock) {
+            long remaining = unlock - elapsed;
+            p.sendMessage(ChatColor.RED + "Ability locked for " + remaining + " more seconds.");
+            return;
         }
 
-        updateBossBar(hunterId);
+        int cooldown = abilityCooldownSeconds.getOrDefault(ability, ability.defaultCooldownSeconds);
+        long nowSec = System.currentTimeMillis() / 1000L;
+        long last = getLastAbilityUse(hunterId, ability);
+        long remainingCd = (last == 0L) ? 0L : (cooldown - (nowSec - last));
+        if (remainingCd > 0) {
+            p.sendMessage(ChatColor.RED + "Ability on cooldown for " + remainingCd + " more seconds.");
+            return;
+        }
+
+        // Trigger ability
+        boolean success = triggerAbility(p, ability);
+        if (success) {
+            setLastAbilityUse(hunterId, ability, nowSec);
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // ABILITY LOGIC (uses player as robot)
+    // ------------------------------------------------------------------------
+
+    private boolean triggerAbility(Player hunter, Ability ability) {
+        UUID hunterId = hunter.getUniqueId();
+        Location loc = hunter.getLocation();
+
+        switch (ability) {
+            case SPEED_OVERDRIVE:
+                overdriveActive.add(hunterId);
+                hunter.removePotionEffect(PotionEffectType.SLOWNESS);
+                hunter.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 20 * 5, 1, false, true, true));
+                hunter.sendTitle(ChatColor.GREEN + "OVERDRIVE", ChatColor.GRAY + "Temporary speed boost!", 5, 40, 10);
+                hunter.getWorld().playSound(loc, Sound.BLOCK_BEACON_POWER_SELECT, 1f, 1.2f);
+                new BukkitRunnable() {
+                    @Override
+                    public void run() {
+                        overdriveActive.remove(hunterId);
+                        hunter.removePotionEffect(PotionEffectType.SPEED);
+                        hunter.addPotionEffect(new PotionEffect(
+                                PotionEffectType.SLOWNESS,
+                                Integer.MAX_VALUE,
+                                0,
+                                false, false, false
+                        ));
+                    }
+                }.runTaskLater(this, 20L * 5);
+                return true;
+
+            case ROCKET_JUMP:
+                hunter.setVelocity(hunter.getVelocity().setY(1.0));
+                hunter.getWorld().playSound(loc, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, 1f, 1f);
+                hunter.getWorld().spawnParticle(Particle.CLOUD, loc, 30, 0.3, 0.0, 0.3, 0.02);
+                hunter.sendTitle(ChatColor.AQUA + "ROCKET JUMP", ChatColor.GRAY + "Up you go!", 5, 20, 10);
+                return true;
+
+            case ZOOM_MODE:
+                hunter.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, 20 * 4, 3, false, false, false));
+                hunter.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, 20 * 4, 0, false, false, false));
+                hunter.sendTitle(ChatColor.YELLOW + "ZOOM MODE", ChatColor.GRAY + "Line up your shot...", 5, 40, 10);
+                hunter.getWorld().playSound(loc, Sound.ITEM_SPYGLASS_USE, 1f, 1f);
+                return true;
+
+            case SONAR_SCAN:
+                if (runnerId != null) {
+                    Player runner = Bukkit.getPlayer(runnerId);
+                    if (runner != null && runner.isOnline()) {
+                        runner.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, 20 * 5, 0, false, false, true));
+                        hunter.sendTitle(ChatColor.BLUE + "SONAR PING", ChatColor.GRAY + "Runner detected!", 5, 40, 10);
+                        hunter.getWorld().playSound(loc, Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 0.5f);
+                        hunter.getWorld().spawnParticle(Particle.SONIC_BOOM, loc, 1, 0, 0, 0, 0);
+                    } else {
+                        hunter.sendMessage(ChatColor.RED + "Runner not online.");
+                        return false;
+                    }
+                } else {
+                    hunter.sendMessage(ChatColor.RED + "No runner set.");
+                    return false;
+                }
+                return true;
+
+            case MINES:
+                // Drop 3 mines around hunter
+                for (int i = 0; i < 3; i++) {
+                    double dx = (Math.random() - 0.5) * 3.0;
+                    double dz = (Math.random() - 0.5) * 3.0;
+                    Location mLoc = loc.clone().add(dx, 0, dz);
+                    mLoc.setY(loc.getY());
+                    mines.add(new Mine(mLoc, hunterId));
+                    hunter.getWorld().spawnParticle(Particle.REDSTONE, mLoc.add(0, 0.1, 0), 8, 0.2, 0.1, 0.2,
+                            new Particle.DustOptions(Color.RED, 1));
+                }
+                hunter.getWorld().playSound(loc, Sound.BLOCK_PISTON_EXTEND, 1f, 0.8f);
+                hunter.sendTitle(ChatColor.GOLD + "MINES DEPLOYED", ChatColor.GRAY + "Careful where they step...", 5, 40, 10);
+                return true;
+
+            case SHIELD:
+                shieldActive.add(hunterId);
+                hunter.addPotionEffect(new PotionEffect(PotionEffectType.DAMAGE_RESISTANCE, 20 * 5, 1, false, true, true));
+                hunter.sendTitle(ChatColor.DARK_AQUA + "SHIELD ONLINE", ChatColor.GRAY + "Damage reduced.", 5, 40, 10);
+                hunter.getWorld().playSound(loc, Sound.ITEM_SHIELD_BLOCK, 1f, 0.8f);
+                hunter.getWorld().spawnParticle(Particle.SPELL_INSTANT, loc, 20, 0.5, 1, 0.5, 0.1);
+                new BukkitRunnable() {
+                    @Override
+                    public void run() {
+                        shieldActive.remove(hunterId);
+                        hunter.removePotionEffect(PotionEffectType.DAMAGE_RESISTANCE);
+                    }
+                }.runTaskLater(this, 20L * 5);
+                return true;
+
+            case SECURITY_CAMERA:
+                if (cameraMode.contains(hunterId)) {
+                    hunter.sendMessage(ChatColor.RED + "Already in camera mode.");
+                    return false;
+                }
+                cameraMode.add(hunterId);
+                Location originalLoc = hunter.getLocation().clone();
+                Location camLoc = originalLoc.clone().add(0, 15, 0);
+                hunter.teleport(camLoc);
+                hunter.setAllowFlight(true);
+                hunter.setFlying(true);
+                hunter.sendTitle(ChatColor.DARK_GREEN + "SECURITY CAMERA", ChatColor.GRAY + "Scanning area...", 10, 40, 10);
+                hunter.getWorld().playSound(camLoc, Sound.BLOCK_BEACON_ACTIVATE, 1f, 1.2f);
+
+                new BukkitRunnable() {
+                    @Override
+                    public void run() {
+                        if (!hunter.isOnline()) {
+                            cameraMode.remove(hunterId);
+                            return;
+                        }
+                        hunter.teleport(originalLoc);
+                        hunter.setFlying(false);
+                        cameraMode.remove(hunterId);
+                        hunter.sendMessage(ChatColor.GRAY + "Exited camera mode.");
+                    }
+                }.runTaskLater(this, 20L * 5);
+                return true;
+
+            case GRAPPLE:
+                if (runnerId != null) {
+                    Player runner = Bukkit.getPlayer(runnerId);
+                    if (runner != null && runner.isOnline() && runner.getWorld().equals(loc.getWorld())) {
+                        double dist = runner.getLocation().distance(loc);
+                        if (dist <= 30) {
+                            Location rLoc = runner.getLocation();
+                            org.bukkit.util.Vector v = loc.toVector().subtract(rLoc.toVector()).normalize().multiply(1.2);
+                            v.setY(0.4);
+                            runner.setVelocity(v);
+                            runner.getWorld().playSound(rLoc, Sound.ENTITY_FISHING_BOBBER_RETRIEVE, 1f, 1f);
+                            hunter.sendTitle(ChatColor.DARK_PURPLE + "GRAPPLE", ChatColor.GRAY + "Get over here!", 5, 40, 10);
+                        } else {
+                            hunter.sendMessage(ChatColor.RED + "Runner too far for grapple (max 30 blocks).");
+                            return false;
+                        }
+                    } else {
+                        hunter.sendMessage(ChatColor.RED + "Runner not online.");
+                        return false;
+                    }
+                } else {
+                    hunter.sendMessage(ChatColor.RED + "No runner set.");
+                    return false;
+                }
+                return true;
+
+            case DRONE_STRIKE:
+                if (runnerId != null) {
+                    Player runner = Bukkit.getPlayer(runnerId);
+                    if (runner != null && runner.isOnline()) {
+                        Location target = runner.getLocation().clone();
+                        target.getWorld().playSound(target, Sound.ENTITY_PHANTOM_SWOOP, 1f, 0.5f);
+                        hunter.sendTitle(ChatColor.RED + "DRONE STRIKE", ChatColor.GRAY + "Incoming!", 10, 40, 10);
+                        new BukkitRunnable() {
+                            @Override
+                            public void run() {
+                                target.getWorld().spawnParticle(Particle.EXPLOSION_LARGE, target, 1, 0, 0, 0, 0);
+                                target.getWorld().playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 1f, 1f);
+                                target.getWorld().createExplosion(target.getX(), target.getY(), target.getZ(), 1.5f, false, false);
+                            }
+                        }.runTaskLater(this, 20L * 2);
+                    } else {
+                        hunter.sendMessage(ChatColor.RED + "Runner not online.");
+                        return false;
+                    }
+                } else {
+                    hunter.sendMessage(ChatColor.RED + "No runner set.");
+                    return false;
+                }
+                return true;
+
+            case THERMAL_VISION:
+                hunter.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, 20 * 8, 0, false, false, false));
+                if (runnerId != null) {
+                    Player runner = Bukkit.getPlayer(runnerId);
+                    if (runner != null && runner.isOnline()) {
+                        runner.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, 20 * 8, 0, false, false, true));
+                    }
+                }
+                hunter.sendTitle(ChatColor.LIGHT_PURPLE + "THERMAL VISION", ChatColor.GRAY + "Targets highlighted.", 10, 40, 10);
+                hunter.getWorld().playSound(loc, Sound.BLOCK_SCULK_SENSOR_CLICKING, 1f, 1f);
+                return true;
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------------
     // EVENTS
     // ------------------------------------------------------------------------
 
-    // Hunter should never get hungry (keep bar always full, looks like no hunger)
+    // Hunter should never get hungry
     @EventHandler
     public void onFoodChange(FoodLevelChangeEvent e) {
         if (!(e.getEntity() instanceof Player)) return;
@@ -611,160 +731,44 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         p.setSaturation(20f);
     }
 
-    // Hunter takes no damage; fall damage is redirected to robot HP
+    // Buff hunter melee damage a bit
     @EventHandler
-    public void onHunterDamage(EntityDamageEvent e) {
-        if (!(e.getEntity() instanceof Player)) return;
-        Player p = (Player) e.getEntity();
-        if (!hunters.contains(p.getUniqueId())) return;
-
-        e.setCancelled(true);
-
-        if (e.getCause() == EntityDamageEvent.DamageCause.FALL) {
-            UUID robotId = hunterRobot.get(p.getUniqueId());
-            if (robotId == null) return;
-
-            Entity robotEntity = Bukkit.getEntity(robotId);
-            if (robotEntity == null) return;
-
-            applyRobotDamage(p.getUniqueId(), robotEntity, e.getFinalDamage());
-        }
-    }
-
-    @EventHandler
-    public void onInventoryClick(InventoryClickEvent e) {
-        if (!(e.getWhoClicked() instanceof Player)) return;
-        Player p = (Player) e.getWhoClicked();
-        if (!hunters.contains(p.getUniqueId())) return;
-
-        if (!e.getView().getTitle().equals(SHOP_TITLE)) return;
-
-        e.setCancelled(true);
-        ItemStack clicked = e.getCurrentItem();
-        if (clicked == null || !clicked.hasItemMeta()) return;
-        ItemMeta meta = clicked.getItemMeta();
-        if (meta == null || meta.getDisplayName() == null) return;
-
-        String name = meta.getDisplayName();
-
-        ShopItem si = shopItems.stream()
-                .filter(s -> s.name.equals(name))
-                .findFirst()
-                .orElse(null);
-        if (si == null) return;
-
-        long elapsed = (gameStartTime == -1L)
-                ? 0
-                : (System.currentTimeMillis() - gameStartTime) / 1000L;
-
-        if (elapsed < si.unlockSeconds) {
-            long remaining = si.unlockSeconds - elapsed;
-            p.sendMessage(ChatColor.RED + "This kit is still locked for " + remaining + " more seconds.");
-            return;
-        }
-
-        UUID hunterId = p.getUniqueId();
-        UUID robotId = hunterRobot.get(hunterId);
-        if (robotId == null) {
-            p.sendMessage(ChatColor.RED + "Robot entity missing.");
-            return;
-        }
-        Entity eRobot = Bukkit.getEntity(robotId);
-        if (!(eRobot instanceof ArmorStand)) {
-            p.sendMessage(ChatColor.RED + "Robot is not an armor stand.");
-            return;
-        }
-        ArmorStand robot = (ArmorStand) eRobot;
-
-        for (ItemStack reward : si.rewards) {
-            if (reward == null) continue;
-            Material m = reward.getType();
-
-            // Armor only on robot
-            if (m.name().endsWith("_HELMET")) {
-                robot.getEquipment().setHelmet(reward.clone());
-            } else if (m.name().endsWith("_CHESTPLATE")) {
-                robot.getEquipment().setChestplate(reward.clone());
-            } else if (m.name().endsWith("_LEGGINGS")) {
-                robot.getEquipment().setLeggings(reward.clone());
-            } else if (m.name().endsWith("_BOOTS")) {
-                robot.getEquipment().setBoots(reward.clone());
-            } else {
-                // Weapons / extras:
-                // weapon to robot main hand if empty, otherwise give to hunter inventory
-                if (m.name().endsWith("_SWORD") || m.name().endsWith("_AXE")) {
-                    ItemStack current = robot.getEquipment().getItemInMainHand();
-                    if (current == null || current.getType() == Material.AIR) {
-                        robot.getEquipment().setItemInMainHand(reward.clone());
-                    } else {
-                        p.getInventory().addItem(reward.clone());
-                    }
-                } else {
-                    p.getInventory().addItem(reward.clone());
-                }
-            }
-        }
-
-        p.sendMessage(ChatColor.GREEN + "Applied " + ChatColor.stripColor(si.name) + " to your robot and inventory.");
-    }
-
-    // Robot (armor stand) takes direct damage; custom 15-heart HP
-    @EventHandler
-    public void onRobotDamage(EntityDamageEvent e) {
-        Entity entity = e.getEntity();
-        if (!(entity instanceof ArmorStand)) return;
-
-        UUID entityId = entity.getUniqueId();
-        if (!robotOwner.containsKey(entityId)) return;
-
-        UUID hunterId = robotOwner.get(entityId);
-        if (!hunters.contains(hunterId)) return;
-
-        e.setCancelled(true);
-        applyRobotDamage(hunterId, entity, e.getFinalDamage());
-    }
-
-    // Robot attack: buffed damage with cooldown, uses vanilla hit detection
-    @EventHandler
-    public void onRobotAttack(EntityDamageByEntityEvent e) {
+    public void onHunterAttack(EntityDamageByEntityEvent e) {
         if (!(e.getDamager() instanceof Player)) return;
-
         Player hunter = (Player) e.getDamager();
         if (!hunters.contains(hunter.getUniqueId())) return;
 
-        // Don't let hunters damage each other
+        // Don't buff damage vs other hunters
         if (e.getEntity() instanceof Player &&
                 hunters.contains(((Player) e.getEntity()).getUniqueId())) {
-            e.setCancelled(true);
             return;
         }
 
         long now = System.currentTimeMillis();
         long last = lastAttackTime.getOrDefault(hunter.getUniqueId(), 0L);
         if (now - last < ATTACK_COOLDOWN_MS) {
-            e.setCancelled(true); // still on cooldown
+            e.setCancelled(true);
             return;
         }
         lastAttackTime.put(hunter.getUniqueId(), now);
 
-        // Base damage: bare hand = 3
-        double damage = 3.0;
+        double damage = e.getDamage();
 
-        // Look at what the ROBOT is holding, not the hunter
-        UUID robotId = hunterRobot.get(hunter.getUniqueId());
-        if (robotId != null) {
-            Entity robotEntity = Bukkit.getEntity(robotId);
-            if (robotEntity instanceof ArmorStand) {
-                ArmorStand robot = (ArmorStand) robotEntity;
-                ItemStack weapon = robot.getEquipment().getItemInMainHand();
-                if (weapon != null) {
-                    String name = weapon.getType().name();
-                    if (name.contains("WOODEN_SWORD")) damage = 6.0;
-                    else if (name.contains("STONE_SWORD")) damage = 7.0;
-                    else if (name.contains("IRON_SWORD")) damage = 8.0;
-                    else if (name.contains("DIAMOND_SWORD")) damage = 9.0;
-                }
-            }
+        // Slightly buff based on weapon
+        ItemStack weapon = hunter.getInventory().getItemInMainHand();
+        if (weapon != null) {
+            String name = weapon.getType().name();
+            if (name.contains("WOODEN_SWORD")) damage += 2.0;
+            else if (name.contains("STONE_SWORD")) damage += 2.5;
+            else if (name.contains("IRON_SWORD")) damage += 3.0;
+            else if (name.contains("DIAMOND_SWORD")) damage += 3.5;
+            else damage += 1.0; // fists or random item
+        } else {
+            damage += 1.0;
+        }
+
+        if (shieldActive.contains(hunter.getUniqueId())) {
+            // just for flavor; doesn't change outgoing damage
         }
 
         e.setDamage(damage);
@@ -787,19 +791,16 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         UUID id = e.getPlayer().getUniqueId();
         if (!hunters.contains(id)) return;
 
-        e.getPlayer().setInvisible(false);
-        e.getPlayer().setCollidable(true);
-        e.getPlayer().setInvulnerable(false);
         e.getPlayer().removePotionEffect(PotionEffectType.SLOWNESS);
+        e.getPlayer().removePotionEffect(PotionEffectType.SPEED);
+        e.getPlayer().removePotionEffect(PotionEffectType.NIGHT_VISION);
+        e.getPlayer().removePotionEffect(PotionEffectType.DAMAGE_RESISTANCE);
 
-        removeRobot(id);
         hunters.remove(id);
         lastAttackTime.remove(id);
-
-        BossBar bar = hunterBars.get(id);
-        if (bar != null) {
-            bar.removeAll();
-        }
+        cameraMode.remove(id);
+        overdriveActive.remove(id);
+        shieldActive.remove(id);
     }
 
     // ------------------------------------------------------------------------
@@ -811,7 +812,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         if (!sender.hasPermission("robothunter.use")) return Collections.emptyList();
 
         if (args.length == 1) {
-            return Arrays.asList("sethunter", "setrunner", "clearhunters", "shop").stream()
+            return Arrays.asList("sethunter", "setrunner", "clearhunters", "abilities").stream()
                     .filter(s -> s.toLowerCase().startsWith(args[0].toLowerCase()))
                     .collect(Collectors.toList());
         }
