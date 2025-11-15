@@ -16,7 +16,6 @@ import org.bukkit.command.TabCompleter;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
-import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -429,7 +428,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         robotHealth.put(id, ROBOT_MAX_HP);
 
         // Create / update bossbar for this hunter
-    BossBar bar = hunterBars.get(id);
+        BossBar bar = hunterBars.get(id);
         if (bar == null) {
             bar = Bukkit.createBossBar(ChatColor.RED + "Robot HP", BarColor.RED, BarStyle.SOLID);
             hunterBars.put(id, bar);
@@ -438,7 +437,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         bar.addPlayer(p);
         bar.setVisible(true);
         updateBossBar(id); // show full hearts at start
-
 
         p.setInvisible(true);
         p.setCollidable(false);
@@ -484,11 +482,11 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }
         robotHealth.remove(hunterId);
 
-        // Optionally hide bossbar when robot is removed
         BossBar bar = hunterBars.get(hunterId);
         if (bar != null) {
+            // keep bar attached but show as empty
             bar.setProgress(0.0);
-            bar.setTitle(ChatColor.RED + "Robot HP: 0/15");
+            bar.setTitle(ChatColor.RED + "Robot HP " + ChatColor.DARK_GRAY + "❤❤❤❤❤❤❤❤❤❤❤❤❤❤❤");
         }
     }
 
@@ -553,10 +551,23 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
         double hp = robotHealth.getOrDefault(hunterId, ROBOT_MAX_HP);
         double progress = Math.max(0.0, Math.min(1.0, hp / ROBOT_MAX_HP));
-        int hearts = (int) Math.ceil(hp / 2.0);
+        int hearts = (int) Math.ceil(hp / 2.0); // 2 HP per heart
+        if (hearts < 0) hearts = 0;
+        if (hearts > 15) hearts = 15;
+
+        int maxHearts = 15;
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < maxHearts; i++) {
+            if (i < hearts) {
+                sb.append(ChatColor.WHITE).append("❤");      // filled heart
+            } else {
+                sb.append(ChatColor.DARK_GRAY).append("❤");  // empty heart
+            }
+        }
 
         bar.setProgress(progress);
-        bar.setTitle(ChatColor.RED + "Robot HP: " + hearts + "/15");
+        bar.setTitle(ChatColor.RED + "Robot HP " + sb);
+        bar.setVisible(true);
     }
 
     private void applyRobotDamage(UUID hunterId, Entity robotEntity, double amount) {
