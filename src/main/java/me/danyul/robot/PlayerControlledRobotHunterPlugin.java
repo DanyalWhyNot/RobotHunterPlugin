@@ -649,22 +649,54 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }
     }
 
-    // Robot attack: buffed damage with cooldown
+       // Robot attack: buffed damage with cooldown, uses vanilla hit detection
     @EventHandler
     public void onRobotAttack(EntityDamageByEntityEvent e) {
         if (!(e.getDamager() instanceof Player)) return;
 
-        Player p = (Player) e.getDamager();
-        if (!hunters.contains(p.getUniqueId())) return;
+        Player hunter = (Player) e.getDamager();
+        if (!hunters.contains(hunter.getUniqueId())) return;
 
-        // Only handle our custom robot swing, don't let vanilla handle it
-        e.setCancelled(true);
-
-        long now = System.currentTimeMillis();
-        long last = lastAttackTime.getOrDefault(p.getUniqueId(), 0L);
-        if (now - last < ATTACK_COOLDOWN_MS) {
+        // Don't let hunters damage each other
+        if (e.getEntity() instanceof Player &&
+                hunters.contains(((Player) e.getEntity()).getUniqueId())) {
+            e.setCancelled(true);
             return;
         }
+
+        long now = System.currentTimeMillis();
+        long last = lastAttackTime.getOrDefault(hunter.getUniqueId(), 0L);
+        if (now - last < ATTACK_COOLDOWN_MS) {
+            // still on cooldown
+            e.setCancelled(true);
+            return;
+        }
+        lastAttackTime.put(hunter.getUniqueId(), now);
+
+        // Base damage: bare hand = 3
+        double damage = 3.0;
+
+        // Look at what the ROBOT is holding, not the hunter
+        UUID robotId = hunterRobot.get(hunter.getUniqueId());
+        if (robotId != null) {
+            Entity robotEntity = Bukkit.getEntity(robotId);
+            if (robotEntity instanceof ArmorStand) {
+                ArmorStand robot = (ArmorStand) robotEntity;
+                ItemStack weapon = robot.getEquipment().getItemInMainHand();
+                if (weapon != null) {
+                    String name = weapon.getType().name();
+                    if (name.contains("WOODEN_SWORD")) damage = 6.0;
+                    else if (name.contains("STONE_SWORD")) damage = 7.0;
+                    else if (name.contains("IRON_SWORD")) damage = 8.0;
+                    else if (name.contains("DIAMOND_SWORD")) damage = 9.0;
+                }
+            }
+        }
+
+        // Apply our custom damage
+        e.setDamage(damage);
+        hunter.playSound(hunter.getLocation(), Sound.ENTITY_PLAYER_ATTACK_STRONG, 1f, 1f);
+    }
         lastAttackTime.put(p.getUniqueId(), now);
 
         UUID robotId = hunterRobot.get(p.getUniqueId());
