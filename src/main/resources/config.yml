@@ -1,0 +1,31 @@
+abilities:
+  speed_overdrive:
+    unlock_seconds: 600    # 10 min
+    cooldown_seconds: 45
+  rocket_jump:
+    unlock_seconds: 780    # 13 min
+    cooldown_seconds: 45
+  zoom_mode:
+    unlock_seconds: 900    # 15 min
+    cooldown_seconds: 30
+  sonar_scan:
+    unlock_seconds: 1200    # 20 min
+    cooldown_seconds: 60
+  mines:
+    unlock_seconds: 1500    # 25 min
+    cooldown_seconds: 90
+  shield:
+    unlock_seconds: 1800    # 30 min
+    cooldown_seconds: 60
+  security_camera:
+    unlock_seconds: 2100    # 35 min
+    cooldown_seconds: 70
+  grapple:
+    unlock_seconds: 2400   # 40 min
+    cooldown_seconds: 60
+  drone_strike:
+    unlock_seconds: 2700   # 45 min
+    cooldown_seconds: 90
+  thermal_vision:
+    unlock_seconds: 3000   # 50 min
+    cooldown_seconds: 90
