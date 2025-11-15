@@ -10,6 +10,7 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
@@ -32,7 +33,6 @@ import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.Vector;
-import org.bukkit.enchantments.Enchantment;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -310,13 +310,12 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         cMeta.setLodestone(runner.getLocation());
                         cMeta.setLodestoneTracked(false); // use custom lodestone position
 
-                        // Make compass look enchanted/glowing
-                    Enchantment glow = Enchantment.getByName("UNBREAKING");
-                    if (glow != null) {
-                        cMeta.addEnchant(glow, 1, true);
-                        cMeta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
-                    }
-
+                        // Make compass look enchanted/glowing in a version-safe way
+                        Enchantment glow = Enchantment.getByName("UNBREAKING");
+                        if (glow != null) {
+                            cMeta.addEnchant(glow, 1, true);
+                            cMeta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+                        }
 
                         compass.setItemMeta(cMeta);
                     }
@@ -649,7 +648,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }
     }
 
-       // Robot attack: buffed damage with cooldown, uses vanilla hit detection
+    // Robot attack: buffed damage with cooldown, uses vanilla hit detection
     @EventHandler
     public void onRobotAttack(EntityDamageByEntityEvent e) {
         if (!(e.getDamager() instanceof Player)) return;
@@ -667,8 +666,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         long now = System.currentTimeMillis();
         long last = lastAttackTime.getOrDefault(hunter.getUniqueId(), 0L);
         if (now - last < ATTACK_COOLDOWN_MS) {
-            // still on cooldown
-            e.setCancelled(true);
+            e.setCancelled(true); // still on cooldown
             return;
         }
         lastAttackTime.put(hunter.getUniqueId(), now);
@@ -693,64 +691,8 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             }
         }
 
-        // Apply our custom damage
         e.setDamage(damage);
         hunter.playSound(hunter.getLocation(), Sound.ENTITY_PLAYER_ATTACK_STRONG, 1f, 1f);
-    }
-        lastAttackTime.put(p.getUniqueId(), now);
-
-        UUID robotId = hunterRobot.get(p.getUniqueId());
-        if (robotId == null) return;
-        Entity robotEntity = Bukkit.getEntity(robotId);
-        if (robotEntity == null) return;
-
-        Location eye = robotEntity.getLocation().clone();
-        Vector dir = eye.getDirection().normalize();
-
-        Entity target = null;
-        double bestDist = 3.0;
-
-        // Search for a target in front of the robot
-        for (Entity nearby : robotEntity.getNearbyEntities(3, 3, 3)) {
-            if (nearby instanceof Player && hunters.contains(nearby.getUniqueId())) {
-                // Don't hit other robot hunters / yourself
-                continue;
-            }
-            if (!(nearby instanceof LivingEntity)) continue;
-
-            Vector to = nearby.getLocation().toVector().subtract(eye.toVector());
-            double proj = to.dot(dir);
-            if (proj < 0 || proj > 3) continue;
-
-            Vector closest = eye.toVector().add(dir.clone().multiply(proj));
-            double dist = closest.distance(nearby.getLocation().toVector());
-            if (dist <= 1.5 && proj < bestDist) {
-                bestDist = proj;
-                target = nearby;
-            }
-        }
-
-        if (target instanceof LivingEntity) {
-            LivingEntity le = (LivingEntity) target;
-
-            // Bare hand = 3, swords buffed: 6 / 7 / 8 / 9
-            double damage = 3.0;
-
-            if (robotEntity instanceof ArmorStand) {
-                ArmorStand robot = (ArmorStand) robotEntity;
-                ItemStack weapon = robot.getEquipment().getItemInMainHand();
-                if (weapon != null) {
-                    String name = weapon.getType().name();
-                    if (name.contains("WOODEN_SWORD")) damage = 6.0;
-                    else if (name.contains("STONE_SWORD")) damage = 7.0;
-                    else if (name.contains("IRON_SWORD")) damage = 8.0;
-                    else if (name.contains("DIAMOND_SWORD")) damage = 9.0;
-                }
-            }
-
-            le.damage(damage, p);
-            p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_ATTACK_STRONG, 1f, 1f);
-        }
     }
 
     @EventHandler
