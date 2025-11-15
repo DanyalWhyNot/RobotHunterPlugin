@@ -34,105 +34,43 @@ import java.util.stream.Collectors;
 public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
 
     private static final String ABILITY_GUI_TITLE = ChatColor.DARK_RED + "Robot Abilities";
-
-    // Attack cooldown so hunter can’t spam hits (ms)
     private static final long ATTACK_COOLDOWN_MS = 600L;
 
-    // Active hunters (supports MULTIPLE hunters)
     private final Set<UUID> hunters = new HashSet<>();
-    // Hunter original spawn location
     private final Map<UUID, Location> hunterSpawn = new HashMap<>();
-    // Last attack times (for melee cooldown)
     private final Map<UUID, Long> lastAttackTime = new HashMap<>();
 
-    // When the game started (ms since epoch)
     private long gameStartTime = -1L;
-
-    // Current runner (speedrunner) for compass tracking
     private UUID runnerId = null;
 
-    // Hunters in "camera" mode
     private final Set<UUID> cameraMode = new HashSet<>();
-    // Hunters with overdrive active (no slowness during this)
     private final Set<UUID> overdriveActive = new HashSet<>();
-    // Hunters with shield active (reduced damage taken)
     private final Set<UUID> shieldActive = new HashSet<>();
 
-    // ------------------------------------------------------------------------
+    // -------- helper for potion effects (avoids missing constants) --------
+    private PotionEffectType effect(String name) {
+        PotionEffectType type = PotionEffectType.getByName(name);
+        if (type == null) {
+            throw new IllegalStateException("Unknown potion effect type: " + name);
+        }
+        return type;
+    }
+
+    // ------------------------------------------------------------------ //
     // ABILITIES
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ //
 
     private enum Ability {
-        SPEED_OVERDRIVE(
-                "speed_overdrive",
-                ChatColor.GREEN + "Speed Overdrive",
-                Material.SUGAR,
-                300,   // 5 min
-                45
-        ),
-        ROCKET_JUMP(
-                "rocket_jump",
-                ChatColor.AQUA + "Rocket Jump",
-                Material.FIRE_CHARGE,
-                360,   // 6 min
-                45
-        ),
-        ZOOM_MODE(
-                "zoom_mode",
-                ChatColor.YELLOW + "Zoom Mode",
-                Material.SPYGLASS,
-                420,   // 7 min
-                30
-        ),
-        SONAR_SCAN(
-                "sonar_scan",
-                ChatColor.BLUE + "Sonar Scan",
-                Material.NAUTILUS_SHELL,
-                480,   // 8 min
-                60
-        ),
-        MINES(
-                "mines",
-                ChatColor.GOLD + "Shock Mines",
-                Material.TNT,
-                600,   // 10 min
-                90
-        ),
-        SHIELD(
-                "shield",
-                ChatColor.DARK_AQUA + "Shield Mode",
-                Material.SHIELD,
-                720,   // 12 min
-                60
-        ),
-        SECURITY_CAMERA(
-                "security_camera",
-                ChatColor.DARK_GREEN + "Security Camera",
-                Material.ENDER_EYE,
-                900,   // 15 min
-                70
-        ),
-        GRAPPLE(
-            "grapple",
-            ChatColor.DARK_PURPLE + "Grapple Pull",
-            Material.FISHING_ROD,
-            1020,  // 17 min
-            60
-        ),
-        DRONE_STRIKE(
-                "drone_strike",
-                ChatColor.RED + "Drone Strike",
-                Material.FIREWORK_ROCKET,
-                1200,  // 20 min
-                90
-        ),
-        THERMAL_VISION(
-                "thermal_vision",
-                ChatColor.LIGHT_PURPLE + "Thermal Vision",
-                Material.MAGMA_CREAM,
-                1320,  // 22 min
-                90
-        );
+        SPEED_OVERDRIVE("speed_overdrive", ChatColor.GREEN + "Speed Overdrive", Material.SUGAR, 300, 45),
+        ROCKET_JUMP("rocket_jump", ChatColor.AQUA + "Rocket Jump", Material.FIRE_CHARGE, 360, 45),
+        ZOOM_MODE("zoom_mode", ChatColor.YELLOW + "Zoom Mode", Material.SPYGLASS, 420, 30),
+        SONAR_SCAN("sonar_scan", ChatColor.BLUE + "Sonar Scan", Material.NAUTILUS_SHELL, 480, 60),
+        MINES("mines", ChatColor.GOLD + "Shock Mines", Material.TNT, 600, 90),
+        SHIELD("shield", ChatColor.DARK_AQUA + "Shield Mode", Material.SHIELD, 720, 60),
+        SECURITY_CAMERA("security_camera", ChatColor.DARK_GREEN + "Security Camera", Material.ENDER_EYE, 900, 70),
+        GRAPPLE("grapple", ChatColor.DARK_PURPLE + "Grapple Pull", Material.FISHING_ROD, 1020, 60),
+        DRONE_STRIKE("drone_strike", ChatColor.RED + "Drone Strike", Material.FIREWORK_ROCKET, 1200, 90),
+        THERMAL_VISION("thermal_vision", ChatColor.LIGHT_PURPLE + "Thermal Vision", Material.MAGMA_CREAM, 1320, 90);
 
         final String key;
         final String displayName;
@@ -149,20 +87,15 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }
     }
 
-    // Configurable unlocks & cooldowns
     private final Map<Ability, Integer> abilityUnlockSeconds = new EnumMap<>(Ability.class);
     private final Map<Ability, Integer> abilityCooldownSeconds = new EnumMap<>(Ability.class);
-    // Per-hunter last used time (seconds since epoch)
     private final Map<UUID, EnumMap<Ability, Long>> lastAbilityUse = new HashMap<>();
 
-    // ------------------------------------------------------------------------
-    // MINES
-    // ------------------------------------------------------------------------
+    // ---------- mines ----------
 
     private static class Mine {
         final Location loc;
         final UUID ownerId;
-
         Mine(Location loc, UUID ownerId) {
             this.loc = loc;
             this.ownerId = ownerId;
@@ -171,9 +104,9 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
     private final List<Mine> mines = new ArrayList<>();
 
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ //
     // ENABLE / DISABLE
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ //
 
     @Override
     public void onEnable() {
@@ -187,7 +120,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         startCompassTask();
         startMineCheckTask();
 
-        getLogger().info("PlayerControlledRobotHunter (player-only) enabled.");
+        getLogger().info("PlayerControlledRobotHunter enabled.");
     }
 
     @Override
@@ -195,38 +128,25 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         getLogger().info("PlayerControlledRobotHunter disabled.");
     }
 
-    // ------------------------------------------------------------------------
-    // CONFIG LOADING
-    // ------------------------------------------------------------------------
-
     private void loadAbilityConfig() {
         for (Ability ability : Ability.values()) {
-            int unlock = getConfig().getInt(
-                    "abilities." + ability.key + ".unlock_seconds",
-                    ability.defaultUnlockSeconds
-            );
-            int cooldown = getConfig().getInt(
-                    "abilities." + ability.key + ".cooldown_seconds",
-                    ability.defaultCooldownSeconds
-            );
-            // Make sure nothing unlocks before 5 minutes (300s)
+            int unlock = getConfig().getInt("abilities." + ability.key + ".unlock_seconds", ability.defaultUnlockSeconds);
+            int cooldown = getConfig().getInt("abilities." + ability.key + ".cooldown_seconds", ability.defaultCooldownSeconds);
             if (unlock < 300) unlock = 300;
-
             abilityUnlockSeconds.put(ability, unlock);
             abilityCooldownSeconds.put(ability, cooldown);
         }
     }
 
-    // ------------------------------------------------------------------------
-    // COMPASS TASK (runner tracking, enchanted compass)
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ //
+    // COMPASS
+    // ------------------------------------------------------------------ //
 
     private void startCompassTask() {
         new BukkitRunnable() {
             @Override
             public void run() {
                 if (runnerId == null) return;
-
                 Player runner = Bukkit.getPlayer(runnerId);
                 if (runner == null || !runner.isOnline()) return;
 
@@ -234,7 +154,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                     Player hunter = Bukkit.getPlayer(hunterId);
                     if (hunter == null || !hunter.isOnline()) continue;
 
-                    // Ensure hunter has a compass
                     ItemStack compass = null;
                     for (int i = 0; i < hunter.getInventory().getSize(); i++) {
                         ItemStack item = hunter.getInventory().getItem(i);
@@ -243,7 +162,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                             break;
                         }
                     }
-
                     if (compass == null) {
                         compass = new ItemStack(Material.COMPASS);
                         hunter.getInventory().addItem(compass);
@@ -254,24 +172,23 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         CompassMeta cMeta = (CompassMeta) meta;
                         cMeta.setDisplayName(ChatColor.AQUA + "Runner Tracker");
                         cMeta.setLodestone(runner.getLocation());
-                        cMeta.setLodestoneTracked(false); // custom position
+                        cMeta.setLodestoneTracked(false);
 
                         Enchantment glow = Enchantment.getByName("UNBREAKING");
                         if (glow != null) {
                             cMeta.addEnchant(glow, 1, true);
                             cMeta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
                         }
-
                         compass.setItemMeta(cMeta);
                     }
                 }
             }
-        }.runTaskTimer(this, 20L, 20L); // update every second
+        }.runTaskTimer(this, 20L, 20L);
     }
 
-    // ------------------------------------------------------------------------
-    // MINES CHECK TASK
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ //
+    // MINES CHECK
+    // ------------------------------------------------------------------ //
 
     private void startMineCheckTask() {
         new BukkitRunnable() {
@@ -286,11 +203,9 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                     Mine mine = it.next();
                     if (!mine.loc.getWorld().equals(runner.getWorld())) continue;
                     if (mine.loc.distanceSquared(runner.getLocation()) <= 1.5 * 1.5) {
-                        // Trigger mine
                         runner.getWorld().playSound(mine.loc, Sound.ENTITY_CREEPER_PRIMED, 1f, 1.2f);
-                        // Visual particles removed for compatibility
                         runner.addPotionEffect(new PotionEffect(effect("SLOWNESS"), 60, 1, false, true, true));
-                        runner.damage(2.0); // one heart
+                        runner.damage(2.0);
                         it.remove();
                     }
                 }
@@ -298,9 +213,9 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }.runTaskTimer(this, 5L, 5L);
     }
 
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ //
     // COMMANDS
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ //
 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
@@ -315,23 +230,18 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }
 
         if (args[0].equalsIgnoreCase("sethunter")) {
+            Player target;
             if (!(sender instanceof Player) && args.length < 2) {
-                sender.sendMessage(ChatColor.RED + "Console must specify a player: /robothunter sethunter <player>");
+                sender.sendMessage(ChatColor.RED + "Console: /robothunter sethunter <player>");
                 return true;
             }
-
-            Player target;
-            if (args.length >= 2) {
-                target = Bukkit.getPlayer(args[1]);
-            } else {
-                target = (Player) sender;
-            }
+            if (args.length >= 2) target = Bukkit.getPlayer(args[1]);
+            else target = (Player) sender;
 
             if (target == null) {
                 sender.sendMessage(ChatColor.RED + "Player not found.");
                 return true;
             }
-
             setHunter(target);
             sender.sendMessage(ChatColor.GREEN + "Set " + target.getName() + " as Robot Hunter.");
             return true;
@@ -378,21 +288,12 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
     private void setHunter(Player p) {
         UUID id = p.getUniqueId();
-        hunters.add(id); // supports multiple hunters
+        hunters.add(id);
 
-        if (gameStartTime == -1L) {
-            gameStartTime = System.currentTimeMillis();
-        }
-
+        if (gameStartTime == -1L) gameStartTime = System.currentTimeMillis();
         hunterSpawn.put(id, p.getLocation().clone());
 
-        // Robot “feel”: slow + no hunger
-        p.addPotionEffect(new PotionEffect(
-        effect("SLOWNESS"),
-        Integer.MAX_VALUE,
-        0,
-        false, false, false
-));
+        p.addPotionEffect(new PotionEffect(effect("SLOWNESS"), Integer.MAX_VALUE, 0, false, false, false));
         p.sendTitle(ChatColor.RED + "ROBOT ONLINE", ChatColor.GRAY + "You are the hunter.", 10, 40, 10);
         p.sendMessage(ChatColor.AQUA + "You are now the Robot Hunter!");
     }
@@ -401,31 +302,22 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         for (UUID id : new HashSet<>(hunters)) {
             Player p = Bukkit.getPlayer(id);
             if (p != null) {
-                p.removePotionEffect(PotionEffectType.SLOWNESS);
-                p.removePotionEffect(PotionEffectType.SPEED);
-                p.removePotionEffect(PotionEffectType.NIGHT_VISION);
-                p.removePotionEffect(PotionEffectType.DAMAGE_RESISTANCE);
+                p.removePotionEffect(effect("SLOWNESS"));
+                p.removePotionEffect(effect("SPEED"));
+                p.removePotionEffect(effect("NIGHT_VISION"));
+                p.removePotionEffect(effect("DAMAGE_RESISTANCE"));
             }
-            lastAttackTime.remove(id);
-            cameraMode.remove(id);
-            overdriveActive.remove(id);
-            shieldActive.remove(id);
         }
         hunters.clear();
+        lastAttackTime.clear();
+        cameraMode.clear();
+        overdriveActive.clear();
+        shieldActive.clear();
     }
-    
-    private PotionEffectType effect(String name) {
-    PotionEffectType type = PotionEffectType.getByName(name);
-    if (type == null) {
-        throw new IllegalStateException("Unknown potion effect type: " + name);
-    }
-    return type;
-}
 
-
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ //
     // ABILITY GUI
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ //
 
     private void openAbilityGui(Player p) {
         Inventory inv = Bukkit.createInventory(p, 9, ABILITY_GUI_TITLE);
@@ -441,7 +333,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             ItemMeta meta = item.getItemMeta();
             if (meta != null) {
                 meta.setDisplayName(ability.displayName);
-
                 List<String> lore = new ArrayList<>();
                 int unlock = abilityUnlockSeconds.getOrDefault(ability, ability.defaultUnlockSeconds);
                 int cooldown = abilityCooldownSeconds.getOrDefault(ability, ability.defaultCooldownSeconds);
@@ -481,18 +372,13 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         map.put(ability, whenSec);
     }
 
-    // ------------------------------------------------------------------------
-    // INVENTORY CLICKS (ABILITY GUI)
-    // ------------------------------------------------------------------------
-
     @EventHandler
     public void onInventoryClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player)) return;
         Player p = (Player) e.getWhoClicked();
         if (!hunters.contains(p.getUniqueId())) return;
 
-        String title = e.getView().getTitle();
-        if (!title.equals(ABILITY_GUI_TITLE)) return;
+        if (!e.getView().getTitle().equals(ABILITY_GUI_TITLE)) return;
 
         e.setCancelled(true);
         ItemStack clicked = e.getCurrentItem();
@@ -505,7 +391,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
     private void handleAbilityClick(Player p, String displayName) {
         UUID hunterId = p.getUniqueId();
-
         Ability ability = Arrays.stream(Ability.values())
                 .filter(a -> a.displayName.equals(displayName))
                 .findFirst()
@@ -532,16 +417,14 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             return;
         }
 
-        // Trigger ability
-        boolean success = triggerAbility(p, ability);
-        if (success) {
+        if (triggerAbility(p, ability)) {
             setLastAbilityUse(hunterId, ability, nowSec);
         }
     }
 
-    // ------------------------------------------------------------------------
-    // ABILITY LOGIC (uses player as robot)
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ //
+    // ABILITY LOGIC
+    // ------------------------------------------------------------------ //
 
     private boolean triggerAbility(Player hunter, Ability ability) {
         UUID hunterId = hunter.getUniqueId();
@@ -550,21 +433,16 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         switch (ability) {
             case SPEED_OVERDRIVE:
                 overdriveActive.add(hunterId);
-                hunter.removePotionEffect(PotionEffectType.SLOWNESS);
-                hunter.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 20 * 5, 1, false, true, true));
+                hunter.removePotionEffect(effect("SLOWNESS"));
+                hunter.addPotionEffect(new PotionEffect(effect("SPEED"), 20 * 5, 1, false, true, true));
                 hunter.sendTitle(ChatColor.GREEN + "OVERDRIVE", ChatColor.GRAY + "Temporary speed boost!", 5, 40, 10);
                 hunter.getWorld().playSound(loc, Sound.BLOCK_BEACON_POWER_SELECT, 1f, 1.2f);
                 new BukkitRunnable() {
                     @Override
                     public void run() {
                         overdriveActive.remove(hunterId);
-                        hunter.removePotionEffect(PotionEffectType.SPEED);
-                        hunter.addPotionEffect(new PotionEffect(
-        effect("SLOWNESS"),
-        Integer.MAX_VALUE,
-        0,
-        false, false, false
-));
+                        hunter.removePotionEffect(effect("SPEED"));
+                        hunter.addPotionEffect(new PotionEffect(effect("SLOWNESS"), Integer.MAX_VALUE, 0, false, false, false));
                     }
                 }.runTaskLater(this, 20L * 5);
                 return true;
@@ -572,7 +450,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             case ROCKET_JUMP:
                 hunter.setVelocity(hunter.getVelocity().setY(1.0));
                 hunter.getWorld().playSound(loc, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, 1f, 1f);
-                // Visual particles removed for compatibility
                 hunter.sendTitle(ChatColor.AQUA + "ROCKET JUMP", ChatColor.GRAY + "Up you go!", 5, 20, 10);
                 return true;
 
@@ -581,8 +458,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 hunter.addPotionEffect(new PotionEffect(effect("NIGHT_VISION"), 20 * 4, 0, false, false, false));
                 hunter.sendTitle(ChatColor.YELLOW + "ZOOM MODE", ChatColor.GRAY + "Line up your shot...", 5, 40, 10);
                 hunter.getWorld().playSound(loc, Sound.ITEM_SPYGLASS_USE, 1f, 1f);
-                 return true;
-
+                return true;
 
             case SONAR_SCAN:
                 if (runnerId != null) {
@@ -591,7 +467,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         runner.addPotionEffect(new PotionEffect(effect("GLOWING"), 20 * 5, 0, false, false, true));
                         hunter.sendTitle(ChatColor.BLUE + "SONAR PING", ChatColor.GRAY + "Runner detected!", 5, 40, 10);
                         hunter.getWorld().playSound(loc, Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 0.5f);
-                        // Visual particles removed for compatibility
                     } else {
                         hunter.sendMessage(ChatColor.RED + "Runner not online.");
                         return false;
@@ -603,15 +478,12 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 return true;
 
             case MINES:
-                // Drop 3 mines around hunter
                 for (int i = 0; i < 3; i++) {
                     double dx = (Math.random() - 0.5) * 3.0;
                     double dz = (Math.random() - 0.5) * 3.0;
                     Location mLoc = loc.clone().add(dx, 0, dz);
                     mLoc.setY(loc.getY());
-                    Mine mine = new Mine(mLoc, hunterId);
-                    mines.add(mine);
-                   // Visual particles removed for compatibility
+                    mines.add(new Mine(mLoc, hunterId));
                 }
                 hunter.getWorld().playSound(loc, Sound.BLOCK_PISTON_EXTEND, 1f, 0.8f);
                 hunter.sendTitle(ChatColor.GOLD + "MINES DEPLOYED", ChatColor.GRAY + "Careful where they step...", 5, 40, 10);
@@ -622,7 +494,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 hunter.addPotionEffect(new PotionEffect(effect("DAMAGE_RESISTANCE"), 20 * 5, 1, false, true, true));
                 hunter.sendTitle(ChatColor.DARK_AQUA + "SHIELD ONLINE", ChatColor.GRAY + "Damage reduced.", 5, 40, 10);
                 hunter.getWorld().playSound(loc, Sound.ITEM_SHIELD_BLOCK, 1f, 0.8f);
-                // Visual particles removed for compatibility
                 new BukkitRunnable() {
                     @Override
                     public void run() {
@@ -697,7 +568,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         new BukkitRunnable() {
                             @Override
                             public void run() {
-                                // Visual particles removed for compatibility
                                 target.getWorld().playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 1f, 1f);
                                 target.getWorld().createExplosion(target.getX(), target.getY(), target.getZ(), 1.5f, false, false);
                             }
@@ -713,7 +583,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 return true;
 
             case THERMAL_VISION:
-hunter.addPotionEffect(new PotionEffect(effect("NIGHT_VISION"), 20 * 8, 0, false, false, false));
+                hunter.addPotionEffect(new PotionEffect(effect("NIGHT_VISION"), 20 * 8, 0, false, false, false));
                 if (runnerId != null) {
                     Player runner = Bukkit.getPlayer(runnerId);
                     if (runner != null && runner.isOnline()) {
@@ -727,11 +597,10 @@ hunter.addPotionEffect(new PotionEffect(effect("NIGHT_VISION"), 20 * 8, 0, false
         return false;
     }
 
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ //
     // EVENTS
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ //
 
-    // Hunter should never get hungry
     @EventHandler
     public void onFoodChange(FoodLevelChangeEvent e) {
         if (!(e.getEntity() instanceof Player)) return;
@@ -743,16 +612,13 @@ hunter.addPotionEffect(new PotionEffect(effect("NIGHT_VISION"), 20 * 8, 0, false
         p.setSaturation(20f);
     }
 
-    // Buff hunter melee damage a bit
     @EventHandler
     public void onHunterAttack(EntityDamageByEntityEvent e) {
         if (!(e.getDamager() instanceof Player)) return;
         Player hunter = (Player) e.getDamager();
         if (!hunters.contains(hunter.getUniqueId())) return;
 
-        // Don't buff damage vs other hunters
-        if (e.getEntity() instanceof Player &&
-                hunters.contains(((Player) e.getEntity()).getUniqueId())) {
+        if (e.getEntity() instanceof Player && hunters.contains(((Player) e.getEntity()).getUniqueId())) {
             return;
         }
 
@@ -765,8 +631,6 @@ hunter.addPotionEffect(new PotionEffect(effect("NIGHT_VISION"), 20 * 8, 0, false
         lastAttackTime.put(hunter.getUniqueId(), now);
 
         double damage = e.getDamage();
-
-        // Slightly buff based on weapon
         ItemStack weapon = hunter.getInventory().getItemInMainHand();
         if (weapon != null) {
             String name = weapon.getType().name();
@@ -774,7 +638,7 @@ hunter.addPotionEffect(new PotionEffect(effect("NIGHT_VISION"), 20 * 8, 0, false
             else if (name.contains("STONE_SWORD")) damage += 2.5;
             else if (name.contains("IRON_SWORD")) damage += 3.0;
             else if (name.contains("DIAMOND_SWORD")) damage += 3.5;
-            else damage += 1.0; // fists or random item
+            else damage += 1.0;
         } else {
             damage += 1.0;
         }
@@ -789,9 +653,7 @@ hunter.addPotionEffect(new PotionEffect(effect("NIGHT_VISION"), 20 * 8, 0, false
         if (!hunters.contains(p.getUniqueId())) return;
 
         Location spawn = hunterSpawn.get(p.getUniqueId());
-        if (spawn != null) {
-            e.setRespawnLocation(spawn);
-        }
+        if (spawn != null) e.setRespawnLocation(spawn);
     }
 
     @EventHandler
@@ -800,10 +662,9 @@ hunter.addPotionEffect(new PotionEffect(effect("NIGHT_VISION"), 20 * 8, 0, false
         if (!hunters.contains(id)) return;
 
         e.getPlayer().removePotionEffect(effect("SLOWNESS"));
-e.getPlayer().removePotionEffect(effect("SPEED"));
-e.getPlayer().removePotionEffect(effect("NIGHT_VISION"));
-e.getPlayer().removePotionEffect(effect("DAMAGE_RESISTANCE"));
-
+        e.getPlayer().removePotionEffect(effect("SPEED"));
+        e.getPlayer().removePotionEffect(effect("NIGHT_VISION"));
+        e.getPlayer().removePotionEffect(effect("DAMAGE_RESISTANCE"));
 
         hunters.remove(id);
         lastAttackTime.remove(id);
@@ -812,9 +673,9 @@ e.getPlayer().removePotionEffect(effect("DAMAGE_RESISTANCE"));
         shieldActive.remove(id);
     }
 
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ //
     // TAB COMPLETE
-    // ------------------------------------------------------------------------
+    // ------------------------------------------------------------------ //
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command cmd, String alias, String[] args) {
