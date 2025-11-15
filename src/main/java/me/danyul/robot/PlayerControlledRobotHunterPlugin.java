@@ -6,6 +6,9 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.World;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -58,6 +61,8 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     private final Map<UUID, Double> robotHealth = new HashMap<>();
     // Last attack times (for cooldown)
     private final Map<UUID, Long> lastAttackTime = new HashMap<>();
+    // Hunter -> bossbar showing robot HP
+    private final Map<UUID, BossBar> hunterBars = new HashMap<>();
 
     // When the game started (ms since epoch)
     private long gameStartTime = -1L;
@@ -99,7 +104,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
     @Override
     public void onDisable() {
-        // Clean up robots on disable
+        // Clean up robots and bossbars on disable
         for (UUID robotId : new HashSet<>(robotOwner.keySet())) {
             Entity e = Bukkit.getEntity(robotId);
             if (e != null) {
@@ -108,6 +113,11 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }
         robotOwner.clear();
         hunterRobot.clear();
+
+        for (BossBar bar : hunterBars.values()) {
+            bar.removeAll();
+        }
+        hunterBars.clear();
 
         getLogger().info("PlayerControlledRobotHunter disabled.");
     }
@@ -418,6 +428,17 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
         robotHealth.put(id, ROBOT_MAX_HP);
 
+        // Create / update bossbar for this hunter
+        BossBar bar = hunterBars.get(id);
+        if (bar == null) {
+            bar = Bukkit.createBossBar(ChatColor.RED + "Robot HP: 15/15", BarColor.RED, BarStyle.SOLID);
+            hunterBars.put(id, bar);
+        }
+        bar.setVisible(true);
+        bar.setProgress(1.0);
+        bar.removeAll();
+        bar.addPlayer(p);
+
         p.setInvisible(true);
         p.setCollidable(false);
         p.setInvulnerable(false); // allow damage events
@@ -461,6 +482,13 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             }
         }
         robotHealth.remove(hunterId);
+
+        // Optionally hide bossbar when robot is removed
+        BossBar bar = hunterBars.get(hunterId);
+        if (bar != null) {
+            bar.setProgress(0.0);
+            bar.setTitle(ChatColor.RED + "Robot HP: 0/15");
+        }
     }
 
     private void clearAllHunters() {
@@ -474,6 +502,11 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             }
             removeRobot(id);
             lastAttackTime.remove(id);
+
+            BossBar bar = hunterBars.get(id);
+            if (bar != null) {
+                bar.removeAll();
+            }
         }
         hunters.clear();
     }
@@ -510,8 +543,20 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     }
 
     // ------------------------------------------------------------------------
-    // DAMAGE HELPER
+    // DAMAGE HELPER (robot HP + bossbar)
     // ------------------------------------------------------------------------
+
+    private void updateBossBar(UUID hunterId) {
+        BossBar bar = hunterBars.get(hunterId);
+        if (bar == null) return;
+
+        double hp = robotHealth.getOrDefault(hunterId, ROBOT_MAX_HP);
+        double progress = Math.max(0.0, Math.min(1.0, hp / ROBOT_MAX_HP));
+        int hearts = (int) Math.ceil(hp / 2.0);
+
+        bar.setProgress(progress);
+        bar.setTitle(ChatColor.RED + "Robot HP: " + hearts + "/15");
+    }
 
     private void applyRobotDamage(UUID hunterId, Entity robotEntity, double amount) {
         double current = robotHealth.getOrDefault(hunterId, ROBOT_MAX_HP);
@@ -534,6 +579,8 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         } else {
             robotHealth.put(hunterId, newHp);
         }
+
+        updateBossBar(hunterId);
     }
 
     // ------------------------------------------------------------------------
@@ -736,6 +783,11 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         removeRobot(id);
         hunters.remove(id);
         lastAttackTime.remove(id);
+
+        BossBar bar = hunterBars.get(id);
+        if (bar != null) {
+            bar.removeAll();
+        }
     }
 
     // ------------------------------------------------------------------------
