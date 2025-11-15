@@ -291,7 +291,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         // Trigger mine
                         runner.getWorld().playSound(mine.loc, Sound.ENTITY_CREEPER_PRIMED, 1f, 1.2f);
                         runner.getWorld().spawnParticle(Particle.CRIT_MAGIC, mine.loc, 35, 0.5, 0.5, 0.5, 0.1);
-                        runner.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, 60, 1, false, true, true));
+                        runner.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 60, 1, false, true, true));
                         runner.damage(2.0); // one heart
                         it.remove();
                     }
@@ -570,11 +570,12 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 return true;
 
             case ZOOM_MODE:
-                hunter.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, 20 * 4, 3, false, false, false));
+                hunter.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 20 * 4, 3, false, false, false));
                 hunter.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, 20 * 4, 0, false, false, false));
                 hunter.sendTitle(ChatColor.YELLOW + "ZOOM MODE", ChatColor.GRAY + "Line up your shot...", 5, 40, 10);
                 hunter.getWorld().playSound(loc, Sound.ITEM_SPYGLASS_USE, 1f, 1f);
-                return true;
+                 return true;
+
 
             case SONAR_SCAN:
                 if (runnerId != null) {
