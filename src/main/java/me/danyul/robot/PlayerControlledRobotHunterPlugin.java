@@ -239,7 +239,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                     // Hunter becomes invisible, non-collidable, invulnerable, and slower (robot feel)
                     hunter.setInvisible(true);
                     hunter.setCollidable(false);
-                    hunter.setInvulnerable(true);
                     if (!hunter.hasPotionEffect(PotionEffectType.SLOWNESS)) {
                         hunter.addPotionEffect(new PotionEffect(
                                 PotionEffectType.SLOWNESS,
@@ -411,7 +410,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
         p.setInvisible(true);
         p.setCollidable(false);
-        p.setInvulnerable(true);
         p.addPotionEffect(new PotionEffect(
                 PotionEffectType.SLOWNESS,
                 Integer.MAX_VALUE,
@@ -707,7 +705,6 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
         e.getPlayer().setInvisible(false);
         e.getPlayer().setCollidable(true);
-        e.getPlayer().setInvulnerable(false);
         e.getPlayer().removePotionEffect(PotionEffectType.SLOWNESS);
 
         removeRobot(id);
