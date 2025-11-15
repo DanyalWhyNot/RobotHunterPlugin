@@ -311,7 +311,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         cMeta.setLodestoneTracked(false); // use custom lodestone position
 
                         // Make compass look enchanted/glowing
-                        cMeta.addEnchant(Enchantment.LUCK, 1, true);
+                        cMeta.addEnchant(Enchantment.DURABILITY, 1, true);
                         cMeta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
 
                         compass.setItemMeta(cMeta);
@@ -674,19 +674,10 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         Entity target = null;
         double bestDist = 3.0;
 
+        // Search for a target in front of the robot
         for (Entity nearby : robotEntity.getNearbyEntities(3, 3, 3)) {
             if (nearby instanceof Player && hunters.contains(nearby.getUniqueId())) {
                 // Don't hit other robot hunters / yourself
-                continue;
-            }
-            if (!(nearBy instanceof LivingEntity)) continue;
-        }
-
-        // Re-scan properly (fix typo)
-        target = null;
-        bestDist = 3.0;
-        for (Entity nearby : robotEntity.getNearbyEntities(3, 3, 3)) {
-            if (nearby instanceof Player && hunters.contains(nearby.getUniqueId())) {
                 continue;
             }
             if (!(nearby instanceof LivingEntity)) continue;
