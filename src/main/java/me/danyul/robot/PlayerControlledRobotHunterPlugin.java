@@ -6,9 +6,6 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.World;
-import org.bukkit.boss.BarColor;
-import org.bukkit.boss.BarStyle;
-import org.bukkit.boss.BossBar;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -25,8 +22,8 @@ import org.bukkit.event.entity.FoodLevelChangeEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
-import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.CompassMeta;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -35,6 +32,7 @@ import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.Vector;
+import org.bukkit.enchantments.Enchantment;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -43,13 +41,13 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
     private static final String SHOP_TITLE = ChatColor.DARK_AQUA + "Robot Hunter Shop";
 
-    // Robot max HP: 24.0 = 12 hearts (a bit tankier than player)
-    private static final double ROBOT_MAX_HP = 24.0;
+    // Robot max HP: 30.0 = 15 hearts
+    private static final double ROBOT_MAX_HP = 30.0;
 
     // Attack cooldown so robot can’t spam hits (ms)
     private static final long ATTACK_COOLDOWN_MS = 600L;
 
-    // Active hunters
+    // Active hunters (supports MULTIPLE hunters)
     private final Set<UUID> hunters = new HashSet<>();
     // Hunter -> robot armor stand UUID
     private final Map<UUID, UUID> hunterRobot = new HashMap<>();
@@ -57,11 +55,9 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     private final Map<UUID, UUID> robotOwner = new HashMap<>();
     // Hunter original spawn location
     private final Map<UUID, Location> hunterSpawn = new HashMap<>();
-    // Custom robot HP
+    // Robot HP tracking
     private final Map<UUID, Double> robotHealth = new HashMap<>();
-    // Boss bars
-    private final Map<UUID, BossBar> hunterBars = new HashMap<>();
-    // Last attack times
+    // Last attack times (for cooldown)
     private final Map<UUID, Long> lastAttackTime = new HashMap<>();
 
     // When the game started (ms since epoch)
@@ -104,11 +100,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
     @Override
     public void onDisable() {
-        for (BossBar bar : hunterBars.values()) {
-            bar.removeAll();
-        }
-        hunterBars.clear();
-
+        // Clean up robots on disable
         for (UUID robotId : new HashSet<>(robotOwner.keySet())) {
             Entity e = Bukkit.getEntity(robotId);
             if (e != null) {
@@ -126,7 +118,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     // ------------------------------------------------------------------------
 
     private void setupShopItems() {
-        // 0s - Wooden kit
+        // Wooden kit (0s)
         shopItems.add(new ShopItem(
                 Material.WOODEN_SWORD,
                 ChatColor.GREEN + "Wooden Kit",
@@ -135,9 +127,10 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         ChatColor.GRAY + "Instant unlock.",
                         ChatColor.YELLOW + "Includes:",
                         ChatColor.GRAY + "- Wooden sword & axe",
-                        ChatColor.GRAY + "- Leather armor"
+                        ChatColor.GRAY + "- Leather armor",
+                        ChatColor.GRAY + "- Blocks & utility items"
                 ),
-                Arrays.asList(
+                kitWithExtras(
                         new ItemStack(Material.WOODEN_SWORD),
                         new ItemStack(Material.WOODEN_AXE),
                         new ItemStack(Material.LEATHER_HELMET),
@@ -147,7 +140,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 )
         ));
 
-        // 600s (10 min) - Stone kit
+        // Stone kit (600s / 10 min)
         shopItems.add(new ShopItem(
                 Material.STONE_SWORD,
                 ChatColor.AQUA + "Stone Kit",
@@ -156,9 +149,10 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         ChatColor.GRAY + "Unlocks after 10 minutes.",
                         ChatColor.YELLOW + "Includes:",
                         ChatColor.GRAY + "- Stone sword & axe",
-                        ChatColor.GRAY + "- Chainmail armor"
+                        ChatColor.GRAY + "- Chainmail armor",
+                        ChatColor.GRAY + "- Blocks & utility items"
                 ),
-                Arrays.asList(
+                kitWithExtras(
                         new ItemStack(Material.STONE_SWORD),
                         new ItemStack(Material.STONE_AXE),
                         new ItemStack(Material.CHAINMAIL_HELMET),
@@ -168,7 +162,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 )
         ));
 
-        // 2400s (40 min) - Iron kit
+        // Iron kit (2400s / 40 min)
         shopItems.add(new ShopItem(
                 Material.IRON_SWORD,
                 ChatColor.WHITE + "Iron Kit",
@@ -177,9 +171,10 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         ChatColor.GRAY + "Unlocks after 40 minutes.",
                         ChatColor.YELLOW + "Includes:",
                         ChatColor.GRAY + "- Iron sword & axe",
-                        ChatColor.GRAY + "- Full iron armor"
+                        ChatColor.GRAY + "- Full iron armor",
+                        ChatColor.GRAY + "- Blocks & utility items"
                 ),
-                Arrays.asList(
+                kitWithExtras(
                         new ItemStack(Material.IRON_SWORD),
                         new ItemStack(Material.IRON_AXE),
                         new ItemStack(Material.IRON_HELMET),
@@ -189,7 +184,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 )
         ));
 
-        // 3600s (60 min) - Diamond kit
+        // Diamond kit (3600s / 60 min)
         shopItems.add(new ShopItem(
                 Material.DIAMOND_SWORD,
                 ChatColor.BLUE + "Diamond Kit",
@@ -198,9 +193,10 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         ChatColor.GRAY + "Unlocks after 60 minutes.",
                         ChatColor.YELLOW + "Includes:",
                         ChatColor.GRAY + "- Diamond sword & axe",
-                        ChatColor.GRAY + "- Full diamond armor"
+                        ChatColor.GRAY + "- Full diamond armor",
+                        ChatColor.GRAY + "- Blocks & utility items"
                 ),
-                Arrays.asList(
+                kitWithExtras(
                         new ItemStack(Material.DIAMOND_SWORD),
                         new ItemStack(Material.DIAMOND_AXE),
                         new ItemStack(Material.DIAMOND_HELMET),
@@ -211,8 +207,30 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         ));
     }
 
+    // Common extras added to EVERY kit (blocks & utility, no food)
+    private List<ItemStack> getCommonExtras() {
+        List<ItemStack> extras = new ArrayList<>();
+        extras.add(new ItemStack(Material.COBBLESTONE, 64));
+        extras.add(new ItemStack(Material.COBBLESTONE, 64));
+        extras.add(new ItemStack(Material.OAK_PLANKS, 64));
+        extras.add(new ItemStack(Material.OAK_PLANKS, 64));
+        extras.add(new ItemStack(Material.LADDER, 32));
+        extras.add(new ItemStack(Material.WATER_BUCKET, 1));
+        extras.add(new ItemStack(Material.LAVA_BUCKET, 1));
+        extras.add(new ItemStack(Material.SHIELD, 1));
+        extras.add(new ItemStack(Material.ENDER_PEARL, 4));
+        return extras;
+    }
+
+    // Helper to merge base kit items + extras
+    private List<ItemStack> kitWithExtras(ItemStack... base) {
+        List<ItemStack> result = new ArrayList<>(Arrays.asList(base));
+        result.addAll(getCommonExtras());
+        return result;
+    }
+
     // ------------------------------------------------------------------------
-    // ROBOT SYNC (position + bossbar + slowness)
+    // ROBOT SYNC (position + slowness + invis)
     // ------------------------------------------------------------------------
 
     private void startRobotSyncTask() {
@@ -236,25 +254,17 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                     Location loc = hunter.getLocation().clone();
                     robot.teleport(loc);
 
-                    // Hunter becomes invisible, non-collidable, invulnerable, and slower (robot feel)
+                    // Hunter becomes invisible, non-collidable, invulnerable, and slow
                     hunter.setInvisible(true);
                     hunter.setCollidable(false);
+                    hunter.setInvulnerable(true); // immune to all damage
                     if (!hunter.hasPotionEffect(PotionEffectType.SLOWNESS)) {
                         hunter.addPotionEffect(new PotionEffect(
                                 PotionEffectType.SLOWNESS,
                                 Integer.MAX_VALUE,
-                                1, // Slowness II – slower than normal
+                                0, // Slowness I
                                 false, false, false
                         ));
-                    }
-
-                    // Update boss bar
-                    BossBar bar = hunterBars.get(hunterId);
-                    if (bar != null) {
-                        double hp = robotHealth.getOrDefault(hunterId, ROBOT_MAX_HP);
-                        double progress = Math.max(0.0, Math.min(1.0, hp / ROBOT_MAX_HP));
-                        bar.setProgress(progress);
-                        bar.setTitle(ChatColor.RED + "Robot Hunter HP: " + (int) Math.ceil(hp) + " / " + (int) ROBOT_MAX_HP);
                     }
                 }
             }
@@ -262,7 +272,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     }
 
     // ------------------------------------------------------------------------
-    // COMPASS TASK (runner tracking)
+    // COMPASS TASK (runner tracking, enchanted compass)
     // ------------------------------------------------------------------------
 
     private void startCompassTask() {
@@ -299,6 +309,11 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         cMeta.setDisplayName(ChatColor.AQUA + "Runner Tracker");
                         cMeta.setLodestone(runner.getLocation());
                         cMeta.setLodestoneTracked(false); // use custom lodestone position
+
+                        // Make compass look enchanted/glowing
+                        cMeta.addEnchant(Enchantment.LUCK, 1, true);
+                        cMeta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+
                         compass.setItemMeta(cMeta);
                     }
                 }
@@ -386,7 +401,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
     private void setHunter(Player p) {
         UUID id = p.getUniqueId();
-        hunters.add(id);
+        hunters.add(id); // supports multiple hunters
 
         if (gameStartTime == -1L) {
             gameStartTime = System.currentTimeMillis();
@@ -400,20 +415,14 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         robotOwner.put(robot.getUniqueId(), id);
 
         robotHealth.put(id, ROBOT_MAX_HP);
-        BossBar bar = Bukkit.createBossBar(
-                ChatColor.RED + "Robot Hunter HP: " + (int) ROBOT_MAX_HP + " / " + (int) ROBOT_MAX_HP,
-                BarColor.RED,
-                BarStyle.SOLID
-        );
-        bar.addPlayer(p);
-        hunterBars.put(id, bar);
 
         p.setInvisible(true);
         p.setCollidable(false);
+        p.setInvulnerable(true); // hunter is totally immune
         p.addPotionEffect(new PotionEffect(
                 PotionEffectType.SLOWNESS,
                 Integer.MAX_VALUE,
-                1,
+                0, // Slowness I
                 false, false, false
         ));
 
@@ -433,6 +442,10 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             as.setInvulnerable(false); // allow damage events
             as.setRemoveWhenFarAway(false);
         });
+
+        // Make it look more "robot" with a skeleton head
+        stand.getEquipment().setHelmet(new ItemStack(Material.SKELETON_SKULL));
+
         return stand;
     }
 
@@ -445,6 +458,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 e.remove();
             }
         }
+        robotHealth.remove(hunterId);
     }
 
     private void clearAllHunters() {
@@ -457,11 +471,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 p.removePotionEffect(PotionEffectType.SLOWNESS);
             }
             removeRobot(id);
-            BossBar bar = hunterBars.remove(id);
-            if (bar != null) {
-                bar.removeAll();
-            }
-            robotHealth.remove(id);
+            lastAttackTime.remove(id);
         }
         hunters.clear();
     }
@@ -501,15 +511,26 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     // EVENTS
     // ------------------------------------------------------------------------
 
+    // Hunter should never get hungry (keep bar always full, looks like no hunger)
     @EventHandler
     public void onFoodChange(FoodLevelChangeEvent e) {
-        if (e.getEntity() instanceof Player) {
-            Player p = (Player) e.getEntity();
-            if (hunters.contains(p.getUniqueId())) {
-                e.setCancelled(true);
-                p.setFoodLevel(20);
-            }
-        }
+        if (!(e.getEntity() instanceof Player)) return;
+        Player p = (Player) e.getEntity();
+        if (!hunters.contains(p.getUniqueId())) return;
+
+        e.setCancelled(true);
+        p.setFoodLevel(20);
+        p.setSaturation(20f);
+    }
+
+    // Hunter takes no damage from anything (including fall)
+    @EventHandler
+    public void onHunterDamage(EntityDamageEvent e) {
+        if (!(e.getEntity() instanceof Player)) return;
+        Player p = (Player) e.getEntity();
+        if (!hunters.contains(p.getUniqueId())) return;
+
+        e.setCancelled(true);
     }
 
     @EventHandler
@@ -571,42 +592,25 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             } else if (m.name().endsWith("_BOOTS")) {
                 robot.getEquipment().setBoots(reward.clone());
             } else {
-                // Weapons: main hand if empty, else ignore extra
-                ItemStack current = robot.getEquipment().getItemInMainHand();
-                if (current == null || current.getType() == Material.AIR) {
-                    robot.getEquipment().setItemInMainHand(reward.clone());
+                // Weapons / extras:
+                // weapon to robot main hand if empty, otherwise give to hunter inventory
+                if (m.name().endsWith("_SWORD") || m.name().endsWith("_AXE")) {
+                    ItemStack current = robot.getEquipment().getItemInMainHand();
+                    if (current == null || current.getType() == Material.AIR) {
+                        robot.getEquipment().setItemInMainHand(reward.clone());
+                    } else {
+                        p.getInventory().addItem(reward.clone());
+                    }
+                } else {
+                    p.getInventory().addItem(reward.clone());
                 }
             }
         }
 
-        p.sendMessage(ChatColor.GREEN + "Applied " + ChatColor.stripColor(si.name) + " to your robot.");
+        p.sendMessage(ChatColor.GREEN + "Applied " + ChatColor.stripColor(si.name) + " to your robot and inventory.");
     }
 
-    @EventHandler
-public void onHunterFallDamage(EntityDamageEvent e) {
-    if (!(e.getEntity() instanceof Player)) return;
-    Player p = (Player) e.getEntity();
-
-    if (!hunters.contains(p.getUniqueId())) return;
-
-    if (e.getCause() == EntityDamageEvent.DamageCause.FALL) {
-
-        double raw = e.getFinalDamage();
-
-        // Make robot-hunter take reduced but still painful fall damage
-        double reduced = raw * 0.70;  // 60% of normal damage (you can change this)
-
-        e.setDamage(reduced);
-
-        p.sendMessage(ChatColor.GRAY + "⚙ Your robot body absorbed some impact damage.");
-
-        return;
-    }
-
-    // Prevent ALL other types of damage to the hunter
-    e.setCancelled(true);
-}
-
+    // Robot (armor stand) takes all damage; custom 15-heart HP
     @EventHandler
     public void onRobotDamage(EntityDamageEvent e) {
         Entity entity = e.getEntity();
@@ -641,6 +645,7 @@ public void onHunterFallDamage(EntityDamageEvent e) {
         }
     }
 
+    // Robot attack: buffed damage with cooldown
     @EventHandler
     public void onRobotAttack(EntityDamageByEntityEvent e) {
         if (!(e.getDamager() instanceof Player)) return;
@@ -648,15 +653,15 @@ public void onHunterFallDamage(EntityDamageEvent e) {
         Player p = (Player) e.getDamager();
         if (!hunters.contains(p.getUniqueId())) return;
 
-        // Attack cooldown: prevent spam
+        // Only handle our custom robot swing, don't let vanilla handle it
+        e.setCancelled(true);
+
         long now = System.currentTimeMillis();
         long last = lastAttackTime.getOrDefault(p.getUniqueId(), 0L);
         if (now - last < ATTACK_COOLDOWN_MS) {
             return;
         }
         lastAttackTime.put(p.getUniqueId(), now);
-
-        e.setCancelled(true);
 
         UUID robotId = hunterRobot.get(p.getUniqueId());
         if (robotId == null) return;
@@ -672,6 +677,16 @@ public void onHunterFallDamage(EntityDamageEvent e) {
         for (Entity nearby : robotEntity.getNearbyEntities(3, 3, 3)) {
             if (nearby instanceof Player && hunters.contains(nearby.getUniqueId())) {
                 // Don't hit other robot hunters / yourself
+                continue;
+            }
+            if (!(nearBy instanceof LivingEntity)) continue;
+        }
+
+        // Re-scan properly (fix typo)
+        target = null;
+        bestDist = 3.0;
+        for (Entity nearby : robotEntity.getNearbyEntities(3, 3, 3)) {
+            if (nearby instanceof Player && hunters.contains(nearby.getUniqueId())) {
                 continue;
             }
             if (!(nearby instanceof LivingEntity)) continue;
@@ -691,15 +706,14 @@ public void onHunterFallDamage(EntityDamageEvent e) {
         if (target instanceof LivingEntity) {
             LivingEntity le = (LivingEntity) target;
 
-            // Base damage a bit higher than normal
-            double damage = 5.0;
+            // Bare hand = 3, swords buffed: 6 / 7 / 8 / 9
+            double damage = 3.0;
 
             if (robotEntity instanceof ArmorStand) {
                 ArmorStand robot = (ArmorStand) robotEntity;
                 ItemStack weapon = robot.getEquipment().getItemInMainHand();
                 if (weapon != null) {
                     String name = weapon.getType().name();
-                    // Make robot hit harder with each tier
                     if (name.contains("WOODEN_SWORD")) damage = 6.0;
                     else if (name.contains("STONE_SWORD")) damage = 7.0;
                     else if (name.contains("IRON_SWORD")) damage = 8.0;
@@ -730,14 +744,10 @@ public void onHunterFallDamage(EntityDamageEvent e) {
 
         e.getPlayer().setInvisible(false);
         e.getPlayer().setCollidable(true);
+        e.getPlayer().setInvulnerable(false);
         e.getPlayer().removePotionEffect(PotionEffectType.SLOWNESS);
 
         removeRobot(id);
-        BossBar bar = hunterBars.remove(id);
-        if (bar != null) {
-            bar.removeAll();
-        }
-        robotHealth.remove(id);
         hunters.remove(id);
         lastAttackTime.remove(id);
     }
