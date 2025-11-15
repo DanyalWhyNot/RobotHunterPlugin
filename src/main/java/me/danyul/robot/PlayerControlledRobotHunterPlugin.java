@@ -1,11 +1,9 @@
-    package me.danyul.robot;
+package me.danyul.robot;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
-import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
-import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -290,7 +288,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                     if (mine.loc.distanceSquared(runner.getLocation()) <= 1.5 * 1.5) {
                         // Trigger mine
                         runner.getWorld().playSound(mine.loc, Sound.ENTITY_CREEPER_PRIMED, 1f, 1.2f);
-                        runner.getWorld().spawnParticle(Particle.CRIT_MAGIC, mine.loc, 35, 0.5, 0.5, 0.5, 0.1);
+                        // Visual particles removed for compatibility
                         runner.addPotionEffect(new PotionEffect(effect("SLOWNESS"), 60, 1, false, true, true));
                         runner.damage(2.0); // one heart
                         it.remove();
@@ -574,7 +572,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             case ROCKET_JUMP:
                 hunter.setVelocity(hunter.getVelocity().setY(1.0));
                 hunter.getWorld().playSound(loc, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, 1f, 1f);
-                hunter.getWorld().spawnParticle(Particle.CLOUD, loc, 30, 0.3, 0.0, 0.3, 0.02);
+                // Visual particles removed for compatibility
                 hunter.sendTitle(ChatColor.AQUA + "ROCKET JUMP", ChatColor.GRAY + "Up you go!", 5, 20, 10);
                 return true;
 
@@ -593,7 +591,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         runner.addPotionEffect(new PotionEffect(effect("GLOWING"), 20 * 5, 0, false, false, true));
                         hunter.sendTitle(ChatColor.BLUE + "SONAR PING", ChatColor.GRAY + "Runner detected!", 5, 40, 10);
                         hunter.getWorld().playSound(loc, Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 0.5f);
-                        hunter.getWorld().spawnParticle(Particle.END_ROD, loc, 30, 0.4, 0.4, 0.4, 0.01);
+                        // Visual particles removed for compatibility
                     } else {
                         hunter.sendMessage(ChatColor.RED + "Runner not online.");
                         return false;
@@ -613,15 +611,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                     mLoc.setY(loc.getY());
                     Mine mine = new Mine(mLoc, hunterId);
                     mines.add(mine);
-                    hunter.getWorld().spawnParticle(
-                            Particle.REDSTONE,
-                            mLoc.add(0, 0.1, 0),
-                            8,
-                            0.2,
-                            0.1,
-                            0.2,
-                            new Particle.DustOptions(Color.RED, 1)
-                    );
+                   // Visual particles removed for compatibility
                 }
                 hunter.getWorld().playSound(loc, Sound.BLOCK_PISTON_EXTEND, 1f, 0.8f);
                 hunter.sendTitle(ChatColor.GOLD + "MINES DEPLOYED", ChatColor.GRAY + "Careful where they step...", 5, 40, 10);
@@ -632,7 +622,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 hunter.addPotionEffect(new PotionEffect(effect("DAMAGE_RESISTANCE"), 20 * 5, 1, false, true, true));
                 hunter.sendTitle(ChatColor.DARK_AQUA + "SHIELD ONLINE", ChatColor.GRAY + "Damage reduced.", 5, 40, 10);
                 hunter.getWorld().playSound(loc, Sound.ITEM_SHIELD_BLOCK, 1f, 0.8f);
-                hunter.getWorld().spawnParticle(Particle.SPELL_WITCH, loc, 20, 0.5, 1, 0.5, 0.1);
+                // Visual particles removed for compatibility
                 new BukkitRunnable() {
                     @Override
                     public void run() {
@@ -707,7 +697,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         new BukkitRunnable() {
                             @Override
                             public void run() {
-                                target.getWorld().spawnParticle(Particle.EXPLOSION_NORMAL, target, 1);
+                                // Visual particles removed for compatibility
                                 target.getWorld().playSound(target, Sound.ENTITY_GENERIC_EXPLODE, 1f, 1f);
                                 target.getWorld().createExplosion(target.getX(), target.getY(), target.getZ(), 1.5f, false, false);
                             }
