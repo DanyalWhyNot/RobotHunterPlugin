@@ -1,4 +1,4 @@
-package me.danyul.robot;
+    package me.danyul.robot;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -291,7 +291,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         // Trigger mine
                         runner.getWorld().playSound(mine.loc, Sound.ENTITY_CREEPER_PRIMED, 1f, 1.2f);
                         runner.getWorld().spawnParticle(Particle.CRIT_MAGIC, mine.loc, 35, 0.5, 0.5, 0.5, 0.1);
-                        runner.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 60, 1, false, true, true));
+                        runner.addPotionEffect(new PotionEffect(effect("SLOWNESS"), 60, 1, false, true, true));
                         runner.damage(2.0); // one heart
                         it.remove();
                     }
@@ -390,11 +390,11 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
         // Robot “feel”: slow + no hunger
         p.addPotionEffect(new PotionEffect(
-                PotionEffectType.SLOWNESS,
-                Integer.MAX_VALUE,
-                0,
-                false, false, false
-        ));
+        effect("SLOWNESS"),
+        Integer.MAX_VALUE,
+        0,
+        false, false, false
+));
         p.sendTitle(ChatColor.RED + "ROBOT ONLINE", ChatColor.GRAY + "You are the hunter.", 10, 40, 10);
         p.sendMessage(ChatColor.AQUA + "You are now the Robot Hunter!");
     }
@@ -415,6 +415,15 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }
         hunters.clear();
     }
+    
+    private PotionEffectType effect(String name) {
+    PotionEffectType type = PotionEffectType.getByName(name);
+    if (type == null) {
+        throw new IllegalStateException("Unknown potion effect type: " + name);
+    }
+    return type;
+}
+
 
     // ------------------------------------------------------------------------
     // ABILITY GUI
@@ -553,11 +562,11 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         overdriveActive.remove(hunterId);
                         hunter.removePotionEffect(PotionEffectType.SPEED);
                         hunter.addPotionEffect(new PotionEffect(
-                                PotionEffectType.SLOWNESS,
-                                Integer.MAX_VALUE,
-                                0,
-                                false, false, false
-                        ));
+        effect("SLOWNESS"),
+        Integer.MAX_VALUE,
+        0,
+        false, false, false
+));
                     }
                 }.runTaskLater(this, 20L * 5);
                 return true;
@@ -570,8 +579,8 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 return true;
 
             case ZOOM_MODE:
-                hunter.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 20 * 4, 3, false, false, false));
-                hunter.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, 20 * 4, 0, false, false, false));
+                hunter.addPotionEffect(new PotionEffect(effect("SLOWNESS"), 20 * 4, 3, false, false, false));
+                hunter.addPotionEffect(new PotionEffect(effect("NIGHT_VISION"), 20 * 4, 0, false, false, false));
                 hunter.sendTitle(ChatColor.YELLOW + "ZOOM MODE", ChatColor.GRAY + "Line up your shot...", 5, 40, 10);
                 hunter.getWorld().playSound(loc, Sound.ITEM_SPYGLASS_USE, 1f, 1f);
                  return true;
@@ -581,7 +590,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 if (runnerId != null) {
                     Player runner = Bukkit.getPlayer(runnerId);
                     if (runner != null && runner.isOnline()) {
-                        runner.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, 20 * 5, 0, false, false, true));
+                        runner.addPotionEffect(new PotionEffect(effect("GLOWING"), 20 * 5, 0, false, false, true));
                         hunter.sendTitle(ChatColor.BLUE + "SONAR PING", ChatColor.GRAY + "Runner detected!", 5, 40, 10);
                         hunter.getWorld().playSound(loc, Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 0.5f);
                         hunter.getWorld().spawnParticle(Particle.END_ROD, loc, 30, 0.4, 0.4, 0.4, 0.01);
@@ -620,7 +629,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
             case SHIELD:
                 shieldActive.add(hunterId);
-                hunter.addPotionEffect(new PotionEffect(PotionEffectType.DAMAGE_RESISTANCE, 20 * 5, 1, false, true, true));
+                hunter.addPotionEffect(new PotionEffect(effect("DAMAGE_RESISTANCE"), 20 * 5, 1, false, true, true));
                 hunter.sendTitle(ChatColor.DARK_AQUA + "SHIELD ONLINE", ChatColor.GRAY + "Damage reduced.", 5, 40, 10);
                 hunter.getWorld().playSound(loc, Sound.ITEM_SHIELD_BLOCK, 1f, 0.8f);
                 hunter.getWorld().spawnParticle(Particle.SPELL_WITCH, loc, 20, 0.5, 1, 0.5, 0.1);
@@ -628,7 +637,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                     @Override
                     public void run() {
                         shieldActive.remove(hunterId);
-                        hunter.removePotionEffect(PotionEffectType.DAMAGE_RESISTANCE);
+                        hunter.removePotionEffect(effect("DAMAGE_RESISTANCE"));
                     }
                 }.runTaskLater(this, 20L * 5);
                 return true;
@@ -714,11 +723,11 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 return true;
 
             case THERMAL_VISION:
-                hunter.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, 20 * 8, 0, false, false, false));
+hunter.addPotionEffect(new PotionEffect(effect("NIGHT_VISION"), 20 * 8, 0, false, false, false));
                 if (runnerId != null) {
                     Player runner = Bukkit.getPlayer(runnerId);
                     if (runner != null && runner.isOnline()) {
-                        runner.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, 20 * 8, 0, false, false, true));
+                        runner.addPotionEffect(new PotionEffect(effect("GLOWING"), 20 * 8, 0, false, false, true));
                     }
                 }
                 hunter.sendTitle(ChatColor.LIGHT_PURPLE + "THERMAL VISION", ChatColor.GRAY + "Targets highlighted.", 10, 40, 10);
@@ -800,10 +809,11 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         UUID id = e.getPlayer().getUniqueId();
         if (!hunters.contains(id)) return;
 
-        e.getPlayer().removePotionEffect(PotionEffectType.SLOWNESS);
-        e.getPlayer().removePotionEffect(PotionEffectType.SPEED);
-        e.getPlayer().removePotionEffect(PotionEffectType.NIGHT_VISION);
-        e.getPlayer().removePotionEffect(PotionEffectType.DAMAGE_RESISTANCE);
+        e.getPlayer().removePotionEffect(effect("SLOWNESS"));
+e.getPlayer().removePotionEffect(effect("SPEED"));
+e.getPlayer().removePotionEffect(effect("NIGHT_VISION"));
+e.getPlayer().removePotionEffect(effect("DAMAGE_RESISTANCE"));
+
 
         hunters.remove(id);
         lastAttackTime.remove(id);
