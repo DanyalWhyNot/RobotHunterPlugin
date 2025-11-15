@@ -429,15 +429,16 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         robotHealth.put(id, ROBOT_MAX_HP);
 
         // Create / update bossbar for this hunter
-        BossBar bar = hunterBars.get(id);
+    BossBar bar = hunterBars.get(id);
         if (bar == null) {
-            bar = Bukkit.createBossBar(ChatColor.RED + "Robot HP: 15/15", BarColor.RED, BarStyle.SOLID);
+            bar = Bukkit.createBossBar(ChatColor.RED + "Robot HP", BarColor.RED, BarStyle.SOLID);
             hunterBars.put(id, bar);
         }
-        bar.setVisible(true);
-        bar.setProgress(1.0);
         bar.removeAll();
         bar.addPlayer(p);
+        bar.setVisible(true);
+        updateBossBar(id); // show full hearts at start
+
 
         p.setInvisible(true);
         p.setCollidable(false);
