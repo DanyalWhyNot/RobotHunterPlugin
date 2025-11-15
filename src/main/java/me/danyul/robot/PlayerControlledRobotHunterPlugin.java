@@ -648,13 +648,39 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     }
 
     @EventHandler
-    public void onPlayerRespawn(PlayerRespawnEvent e) {
-        Player p = e.getPlayer();
-        if (!hunters.contains(p.getUniqueId())) return;
+public void onPlayerRespawn(PlayerRespawnEvent e) {
+    Player p = e.getPlayer();
+    UUID id = p.getUniqueId();
+    if (!hunters.contains(id)) return;
 
-        Location spawn = hunterSpawn.get(p.getUniqueId());
-        if (spawn != null) e.setRespawnLocation(spawn);
+    // Send hunter back to their saved spawn
+    Location spawn = hunterSpawn.get(id);
+    if (spawn != null) {
+        e.setRespawnLocation(spawn);
     }
+
+    // After respawn, re-apply the base "robot" effects
+    // (run 1 tick later so the player is fully alive first)
+    new BukkitRunnable() {
+        @Override
+        public void run() {
+            // Clear any leftover ability effects
+            p.removePotionEffect(effect("SPEED"));
+            p.removePotionEffect(effect("NIGHT_VISION"));
+            p.removePotionEffect(effect("DAMAGE_RESISTANCE"));
+
+            // Re-apply permanent robot slowness
+            p.addPotionEffect(new PotionEffect(
+                    effect("SLOWNESS"),
+                    Integer.MAX_VALUE,
+                    0,
+                    false,
+                    false,
+                    false
+            ));
+        }
+    }.runTaskLater(PlayerControlledRobotHunterPlugin.this, 1L);
+}
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent e) {
