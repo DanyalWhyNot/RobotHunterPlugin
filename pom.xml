@@ -1,37 +1,16 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+name: PlayerControlledRobotHunter
+main: me.danyul.robot.PlayerControlledRobotHunterPlugin
+version: 1.0.0
+api-version: 1.21
+author: Danyul
 
-    <modelVersion>4.0.0</modelVersion>
+commands:
+  robothunter:
+    description: Robot hunter commands
+    usage: /robothunter <sethunter|setrunner|clearhunters|shop>
+    permission: robothunter.use
 
-    <groupId>me.danyul</groupId>
-    <artifactId>PlayerControlledRobotHunter</artifactId>
-    <version>1.0.0</version>
-    <packaging>jar</packaging>
-
-    <name>PlayerControlledRobotHunter</name>
-    <description>Robot-controlled hunter plugin</description>
-
-    <properties>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
-    </properties>
-
-    <!-- PaperMC repo so Maven can find paper-api -->
-    <repositories>
-        <repository>
-            <id>papermc-repo</id>
-            <url>https://repo.papermc.io/repository/maven-public/</url>
-        </repository>
-    </repositories>
-
-    <dependencies>
-        <dependency>
-            <groupId>io.papermc.paper</groupId>
-            <artifactId>paper-api</artifactId>
-            <version>1.21.1-R0.1-SNAPSHOT</version>
-            <scope>provided</scope>
-        </dependency>
-    </dependencies>
-
-</project>
+permissions:
+  robothunter.use:
+    description: Use robot hunter commands
+    default: op
