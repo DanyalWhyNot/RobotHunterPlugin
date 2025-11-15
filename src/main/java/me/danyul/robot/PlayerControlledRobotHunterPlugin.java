@@ -583,6 +583,31 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     }
 
     @EventHandler
+public void onHunterFallDamage(EntityDamageEvent e) {
+    if (!(e.getEntity() instanceof Player)) return;
+    Player p = (Player) e.getEntity();
+
+    if (!hunters.contains(p.getUniqueId())) return;
+
+    if (e.getCause() == EntityDamageEvent.DamageCause.FALL) {
+
+        double raw = e.getFinalDamage();
+
+        // Make robot-hunter take reduced but still painful fall damage
+        double reduced = raw * 0.70;  // 60% of normal damage (you can change this)
+
+        e.setDamage(reduced);
+
+        p.sendMessage(ChatColor.GRAY + "⚙ Your robot body absorbed some impact damage.");
+
+        return;
+    }
+
+    // Prevent ALL other types of damage to the hunter
+    e.setCancelled(true);
+}
+
+    @EventHandler
     public void onRobotDamage(EntityDamageEvent e) {
         Entity entity = e.getEntity();
         if (!(entity instanceof ArmorStand)) return;
