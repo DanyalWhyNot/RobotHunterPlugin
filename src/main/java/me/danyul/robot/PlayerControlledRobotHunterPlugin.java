@@ -311,8 +311,12 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                         cMeta.setLodestoneTracked(false); // use custom lodestone position
 
                         // Make compass look enchanted/glowing
-                        cMeta.addEnchant(Enchantment.DURABILITY, 1, true);
+                    Enchantment glow = Enchantment.getByName("UNBREAKING");
+                    if (glow != null) {
+                        cMeta.addEnchant(glow, 1, true);
                         cMeta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+                    }
+
 
                         compass.setItemMeta(cMeta);
                     }
