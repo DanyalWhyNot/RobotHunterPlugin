@@ -34,24 +34,32 @@ import java.util.stream.Collectors;
 public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
 
     private static final String ABILITY_GUI_TITLE = ChatColor.DARK_RED + "Robot Abilities";
+    // melee hit cooldown so hunter can’t spam
     private static final long ATTACK_COOLDOWN_MS = 600L;
 
+    // who is a hunter
     private final Set<UUID> hunters = new HashSet<>();
+    // hunter spawn points
     private final Map<UUID, Location> hunterSpawn = new HashMap<>();
+    // last attack times
     private final Map<UUID, Long> lastAttackTime = new HashMap<>();
 
+    // when the run actually starts (set by /robothunter start)
     private long gameStartTime = -1L;
+
+    // runner to track
     private UUID runnerId = null;
 
+    // state flags
     private final Set<UUID> cameraMode = new HashSet<>();
     private final Set<UUID> overdriveActive = new HashSet<>();
     private final Set<UUID> shieldActive = new HashSet<>();
 
-    // -------- helper for potion effects (avoids missing constants) --------
+    // helper to safely get potion effects by name (your API doesn’t expose constants)
     private PotionEffectType effect(String name) {
         PotionEffectType type = PotionEffectType.getByName(name);
         if (type == null) {
-            throw new IllegalStateException("Unknown potion effect type: " + name);
+            throw new IllegalStateException("Unknown potion effect: " + name);
         }
         return type;
     }
@@ -61,35 +69,34 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     // ------------------------------------------------------------------ //
 
     private enum Ability {
-        SPEED_OVERDRIVE("speed_overdrive", ChatColor.GREEN + "Speed Overdrive", Material.SUGAR, 300, 45),
-        ROCKET_JUMP("rocket_jump", ChatColor.AQUA + "Rocket Jump", Material.FIRE_CHARGE, 360, 45),
-        ZOOM_MODE("zoom_mode", ChatColor.YELLOW + "Zoom Mode", Material.SPYGLASS, 420, 30),
-        SONAR_SCAN("sonar_scan", ChatColor.BLUE + "Sonar Scan", Material.NAUTILUS_SHELL, 480, 60),
-        MINES("mines", ChatColor.GOLD + "Shock Mines", Material.TNT, 600, 90),
-        SHIELD("shield", ChatColor.DARK_AQUA + "Shield Mode", Material.SHIELD, 720, 60),
-        SECURITY_CAMERA("security_camera", ChatColor.DARK_GREEN + "Security Camera", Material.ENDER_EYE, 900, 70),
-        GRAPPLE("grapple", ChatColor.DARK_PURPLE + "Grapple Pull", Material.FISHING_ROD, 1020, 60),
-        DRONE_STRIKE("drone_strike", ChatColor.RED + "Drone Strike", Material.FIREWORK_ROCKET, 1200, 90),
-        THERMAL_VISION("thermal_vision", ChatColor.LIGHT_PURPLE + "Thermal Vision", Material.MAGMA_CREAM, 1320, 90);
+        SPEED_OVERDRIVE("speed_overdrive", ChatColor.GREEN + "Speed Overdrive", Material.SUGAR, 300),
+        ROCKET_JUMP("rocket_jump", ChatColor.AQUA + "Rocket Jump", Material.FIRE_CHARGE, 360),
+        ZOOM_MODE("zoom_mode", ChatColor.YELLOW + "Zoom Mode", Material.SPYGLASS, 420),
+        SONAR_SCAN("sonar_scan", ChatColor.BLUE + "Sonar Scan", Material.NAUTILUS_SHELL, 480),
+        MINES("mines", ChatColor.GOLD + "Shock Mines", Material.TNT, 600),
+        SHIELD("shield", ChatColor.DARK_AQUA + "Shield Mode", Material.SHIELD, 720),
+        SECURITY_CAMERA("security_camera", ChatColor.DARK_GREEN + "Security Camera", Material.ENDER_EYE, 900),
+        GRAPPLE("grapple", ChatColor.DARK_PURPLE + "Grapple Pull", Material.FISHING_ROD, 1020),
+        DRONE_STRIKE("drone_strike", ChatColor.RED + "Drone Strike", Material.FIREWORK_ROCKET, 1200),
+        THERMAL_VISION("thermal_vision", ChatColor.LIGHT_PURPLE + "Thermal Vision", Material.MAGMA_CREAM, 1320);
 
         final String key;
         final String displayName;
         final Material icon;
         final int defaultUnlockSeconds;
-        final int defaultCooldownSeconds;
 
-        Ability(String key, String displayName, Material icon, int defaultUnlockSeconds, int defaultCooldownSeconds) {
+        Ability(String key, String displayName, Material icon, int defaultUnlockSeconds) {
             this.key = key;
             this.displayName = displayName;
             this.icon = icon;
             this.defaultUnlockSeconds = defaultUnlockSeconds;
-            this.defaultCooldownSeconds = defaultCooldownSeconds;
         }
     }
 
+    // unlock times (seconds after /robothunter start)
     private final Map<Ability, Integer> abilityUnlockSeconds = new EnumMap<>(Ability.class);
-    private final Map<Ability, Integer> abilityCooldownSeconds = new EnumMap<>(Ability.class);
-    private final Map<UUID, EnumMap<Ability, Long>> lastAbilityUse = new HashMap<>();
+    // abilities used once per hunter
+    private final Map<UUID, EnumSet<Ability>> usedAbilities = new HashMap<>();
 
     // ---------- mines ----------
 
@@ -130,11 +137,13 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
     private void loadAbilityConfig() {
         for (Ability ability : Ability.values()) {
-            int unlock = getConfig().getInt("abilities." + ability.key + ".unlock_seconds", ability.defaultUnlockSeconds);
-            int cooldown = getConfig().getInt("abilities." + ability.key + ".cooldown_seconds", ability.defaultCooldownSeconds);
+            int unlock = getConfig().getInt(
+                    "abilities." + ability.key + ".unlock_seconds",
+                    ability.defaultUnlockSeconds
+            );
+            // never unlock before 5 minutes
             if (unlock < 300) unlock = 300;
             abilityUnlockSeconds.put(ability, unlock);
-            abilityCooldownSeconds.put(ability, cooldown);
         }
     }
 
@@ -225,10 +234,11 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }
 
         if (args.length == 0) {
-            sender.sendMessage(ChatColor.YELLOW + "Usage: /robothunter <sethunter|setrunner|clearhunters|abilities>");
+            sender.sendMessage(ChatColor.YELLOW + "Usage: /robothunter <sethunter|setrunner|start|clearhunters|abilities>");
             return true;
         }
 
+        // /robothunter sethunter [player]
         if (args[0].equalsIgnoreCase("sethunter")) {
             Player target;
             if (!(sender instanceof Player) && args.length < 2) {
@@ -247,6 +257,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             return true;
         }
 
+        // /robothunter setrunner <player>
         if (args[0].equalsIgnoreCase("setrunner")) {
             if (args.length < 2) {
                 sender.sendMessage(ChatColor.YELLOW + "Usage: /robothunter setrunner <player>");
@@ -262,12 +273,23 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             return true;
         }
 
+        // /robothunter start  -> start the run, timers begin now
+        if (args[0].equalsIgnoreCase("start")) {
+            gameStartTime = System.currentTimeMillis();
+            usedAbilities.clear(); // reset one-time usage
+            sender.sendMessage(ChatColor.GREEN + "Robot Hunter run started!");
+            Bukkit.broadcastMessage(ChatColor.RED + "[RobotHunter] Run has started!");
+            return true;
+        }
+
+        // /robothunter clearhunters
         if (args[0].equalsIgnoreCase("clearhunters")) {
             clearAllHunters();
             sender.sendMessage(ChatColor.YELLOW + "Cleared all robot hunters.");
             return true;
         }
 
+        // /robothunter abilities
         if (args[0].equalsIgnoreCase("abilities")) {
             if (!(sender instanceof Player)) {
                 sender.sendMessage(ChatColor.RED + "Only players can use abilities.");
@@ -290,9 +312,9 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         UUID id = p.getUniqueId();
         hunters.add(id);
 
-        if (gameStartTime == -1L) gameStartTime = System.currentTimeMillis();
         hunterSpawn.put(id, p.getLocation().clone());
 
+        // base robot effect: always slow
         p.addPotionEffect(new PotionEffect(effect("SLOWNESS"), Integer.MAX_VALUE, 0, false, false, false));
         p.sendTitle(ChatColor.RED + "ROBOT ONLINE", ChatColor.GRAY + "You are the hunter.", 10, 40, 10);
         p.sendMessage(ChatColor.AQUA + "You are now the Robot Hunter!");
@@ -313,18 +335,33 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         cameraMode.clear();
         overdriveActive.clear();
         shieldActive.clear();
+        usedAbilities.clear();
+        gameStartTime = -1L;
     }
 
     // ------------------------------------------------------------------ //
     // ABILITY GUI
     // ------------------------------------------------------------------ //
 
+    private long getElapsedSeconds() {
+        if (gameStartTime <= 0) return 0;
+        return (System.currentTimeMillis() - gameStartTime) / 1000L;
+    }
+
+    private boolean hasUsedAbility(UUID hunterId, Ability ability) {
+        EnumSet<Ability> set = usedAbilities.get(hunterId);
+        return set != null && set.contains(ability);
+    }
+
+    private void markAbilityUsed(UUID hunterId, Ability ability) {
+        usedAbilities.computeIfAbsent(hunterId, k -> EnumSet.noneOf(Ability.class)).add(ability);
+    }
+
     private void openAbilityGui(Player p) {
         Inventory inv = Bukkit.createInventory(p, 9, ABILITY_GUI_TITLE);
 
-        long elapsed = (gameStartTime == -1L)
-                ? 0
-                : (System.currentTimeMillis() - gameStartTime) / 1000L;
+        long elapsed = getElapsedSeconds();
+        UUID hunterId = p.getUniqueId();
 
         Ability[] abilities = Ability.values();
         for (int i = 0; i < abilities.length && i < inv.getSize(); i++) {
@@ -335,21 +372,18 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 meta.setDisplayName(ability.displayName);
                 List<String> lore = new ArrayList<>();
                 int unlock = abilityUnlockSeconds.getOrDefault(ability, ability.defaultUnlockSeconds);
-                int cooldown = abilityCooldownSeconds.getOrDefault(ability, ability.defaultCooldownSeconds);
 
-                if (elapsed >= unlock) {
-                    long nowSec = System.currentTimeMillis() / 1000L;
-                    long last = getLastAbilityUse(p.getUniqueId(), ability);
-                    long remainingCd = (last == 0L) ? 0L : (cooldown - (nowSec - last));
-                    if (remainingCd <= 0) {
-                        lore.add(ChatColor.GREEN + "Ready!");
-                        lore.add(ChatColor.GRAY + "Cooldown: " + cooldown + "s");
-                    } else {
-                        lore.add(ChatColor.RED + "Cooldown: " + remainingCd + "s remaining");
-                    }
-                } else {
+                if (gameStartTime <= 0) {
+                    lore.add(ChatColor.RED + "Run has not started yet.");
+                    lore.add(ChatColor.GRAY + "Use /robothunter start");
+                } else if (elapsed < unlock) {
                     long remainingUnlock = unlock - elapsed;
                     lore.add(ChatColor.RED + "Locked: " + remainingUnlock + "s until unlock");
+                } else if (hasUsedAbility(hunterId, ability)) {
+                    lore.add(ChatColor.DARK_GRAY + "Already used (one-time)");
+                } else {
+                    lore.add(ChatColor.GREEN + "Ready!");
+                    lore.add(ChatColor.GRAY + "One-time use only.");
                 }
 
                 meta.setLore(lore);
@@ -361,17 +395,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         p.openInventory(inv);
     }
 
-    private long getLastAbilityUse(UUID hunterId, Ability ability) {
-        EnumMap<Ability, Long> map = lastAbilityUse.get(hunterId);
-        if (map == null) return 0L;
-        return map.getOrDefault(ability, 0L);
-    }
-
-    private void setLastAbilityUse(UUID hunterId, Ability ability, long whenSec) {
-        EnumMap<Ability, Long> map = lastAbilityUse.computeIfAbsent(hunterId, k -> new EnumMap<>(Ability.class));
-        map.put(ability, whenSec);
-    }
-
+    // click handling
     @EventHandler
     public void onInventoryClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player)) return;
@@ -397,9 +421,11 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 .orElse(null);
         if (ability == null) return;
 
-        long elapsed = (gameStartTime == -1L)
-                ? 0
-                : (System.currentTimeMillis() - gameStartTime) / 1000L;
+        long elapsed = getElapsedSeconds();
+        if (gameStartTime <= 0) {
+            p.sendMessage(ChatColor.RED + "The run hasn’t started yet. Use /robothunter start.");
+            return;
+        }
 
         int unlock = abilityUnlockSeconds.getOrDefault(ability, ability.defaultUnlockSeconds);
         if (elapsed < unlock) {
@@ -408,17 +434,13 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             return;
         }
 
-        int cooldown = abilityCooldownSeconds.getOrDefault(ability, ability.defaultCooldownSeconds);
-        long nowSec = System.currentTimeMillis() / 1000L;
-        long last = getLastAbilityUse(hunterId, ability);
-        long remainingCd = (last == 0L) ? 0L : (cooldown - (nowSec - last));
-        if (remainingCd > 0) {
-            p.sendMessage(ChatColor.RED + "Ability on cooldown for " + remainingCd + " more seconds.");
+        if (hasUsedAbility(hunterId, ability)) {
+            p.sendMessage(ChatColor.RED + "You already used this ability (one-time only).");
             return;
         }
 
         if (triggerAbility(p, ability)) {
-            setLastAbilityUse(hunterId, ability, nowSec);
+            markAbilityUsed(hunterId, ability);
         }
     }
 
@@ -601,6 +623,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     // EVENTS
     // ------------------------------------------------------------------ //
 
+    // keep hunter always full food & no hunger
     @EventHandler
     public void onFoodChange(FoodLevelChangeEvent e) {
         if (!(e.getEntity() instanceof Player)) return;
@@ -612,6 +635,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         p.setSaturation(20f);
     }
 
+    // buff hunter melee a bit + cooldown
     @EventHandler
     public void onHunterAttack(EntityDamageByEntityEvent e) {
         if (!(e.getDamager() instanceof Player)) return;
@@ -647,40 +671,35 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         hunter.playSound(hunter.getLocation(), Sound.ENTITY_PLAYER_ATTACK_STRONG, 1f, 1f);
     }
 
+    // reapply robot effects after death
     @EventHandler
-public void onPlayerRespawn(PlayerRespawnEvent e) {
-    Player p = e.getPlayer();
-    UUID id = p.getUniqueId();
-    if (!hunters.contains(id)) return;
+    public void onPlayerRespawn(PlayerRespawnEvent e) {
+        Player p = e.getPlayer();
+        UUID id = p.getUniqueId();
+        if (!hunters.contains(id)) return;
 
-    // Send hunter back to their saved spawn
-    Location spawn = hunterSpawn.get(id);
-    if (spawn != null) {
-        e.setRespawnLocation(spawn);
-    }
-
-    // After respawn, re-apply the base "robot" effects
-    // (run 1 tick later so the player is fully alive first)
-    new BukkitRunnable() {
-        @Override
-        public void run() {
-            // Clear any leftover ability effects
-            p.removePotionEffect(effect("SPEED"));
-            p.removePotionEffect(effect("NIGHT_VISION"));
-            p.removePotionEffect(effect("DAMAGE_RESISTANCE"));
-
-            // Re-apply permanent robot slowness
-            p.addPotionEffect(new PotionEffect(
-                    effect("SLOWNESS"),
-                    Integer.MAX_VALUE,
-                    0,
-                    false,
-                    false,
-                    false
-            ));
+        Location spawn = hunterSpawn.get(id);
+        if (spawn != null) {
+            e.setRespawnLocation(spawn);
         }
-    }.runTaskLater(PlayerControlledRobotHunterPlugin.this, 1L);
-}
+
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                p.removePotionEffect(effect("SPEED"));
+                p.removePotionEffect(effect("NIGHT_VISION"));
+                p.removePotionEffect(effect("DAMAGE_RESISTANCE"));
+                p.addPotionEffect(new PotionEffect(
+                        effect("SLOWNESS"),
+                        Integer.MAX_VALUE,
+                        0,
+                        false,
+                        false,
+                        false
+                ));
+            }
+        }.runTaskLater(this, 1L);
+    }
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent e) {
@@ -697,6 +716,7 @@ public void onPlayerRespawn(PlayerRespawnEvent e) {
         cameraMode.remove(id);
         overdriveActive.remove(id);
         shieldActive.remove(id);
+        usedAbilities.remove(id);
     }
 
     // ------------------------------------------------------------------ //
@@ -708,7 +728,7 @@ public void onPlayerRespawn(PlayerRespawnEvent e) {
         if (!sender.hasPermission("robothunter.use")) return Collections.emptyList();
 
         if (args.length == 1) {
-            return Arrays.asList("sethunter", "setrunner", "clearhunters", "abilities").stream()
+            return Arrays.asList("sethunter", "setrunner", "start", "clearhunters", "abilities").stream()
                     .filter(s -> s.toLowerCase().startsWith(args[0].toLowerCase()))
                     .collect(Collectors.toList());
         }
