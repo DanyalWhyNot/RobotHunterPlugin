@@ -303,6 +303,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 p.sendMessage(ChatColor.RED + "You are not a robot hunter.");
                 return true;
             }
+            pendingAbility.remove(p.getUniqueId());
             openAbilityGui(p);
             return true;
         }
@@ -413,8 +414,53 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         ItemMeta meta = clicked.getItemMeta();
         if (meta == null || meta.getDisplayName() == null) return;
 
-        handleAbilityClick(p, meta.getDisplayName());
+        Ability selected = getAbilityByDisplayName(meta.getDisplayName());
+if (selected != null) {
+    pendingAbility.put(p.getUniqueId(), selected);
+    p.sendMessage(ChatColor.GREEN + "Selected: " + selected.displayName + ChatColor.GRAY + " (closes on GUI exit)");
+
+    private Ability getAbilityByDisplayName(String name) {
+    for (Ability a : Ability.values()) {
+        if (a.displayName.equals(name)) return a;
     }
+    return null;
+}
+}
+    }
+
+@EventHandler
+public void onInventoryClose(org.bukkit.event.inventory.InventoryCloseEvent e) {
+    if (!(e.getPlayer() instanceof Player)) return;
+
+    Player p = (Player) e.getPlayer();
+    if (!hunters.contains(p.getUniqueId())) return;
+
+    if (!e.getView().getTitle().equals(ABILITY_GUI_TITLE)) return;
+
+    UUID id = p.getUniqueId();
+
+    // If no ability was selected, do nothing
+    if (!pendingAbility.containsKey(id)) return;
+
+    Ability selected = pendingAbility.remove(id);
+    long elapsed = getElapsedSeconds();
+
+    int unlock = abilityUnlockSeconds.getOrDefault(selected, selected.defaultUnlockSeconds);
+
+    if (elapsed < unlock) {
+        p.sendMessage(ChatColor.RED + "Ability is still locked for " + (unlock - elapsed) + " more seconds.");
+        return;
+    }
+
+    if (hasUsedAbility(id, selected)) {
+        p.sendMessage(ChatColor.RED + "You already used this ability (one-time).");
+        return;
+    }
+
+    if (triggerAbility(p, selected)) {
+        markAbilityUsed(id, selected);
+    }
+}
 
     private void handleAbilityClick(Player p, String displayName) {
         UUID hunterId = p.getUniqueId();
