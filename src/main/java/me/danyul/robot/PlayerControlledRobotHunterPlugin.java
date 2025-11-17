@@ -16,6 +16,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.FoodLevelChangeEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.inventory.Inventory;
@@ -33,14 +34,12 @@ import java.util.stream.Collectors;
 
 public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
 
-    private final Map<UUID, Ability> pendingAbility = new HashMap<>();
-
     private static final String ABILITY_GUI_TITLE = ChatColor.DARK_RED + "Robot Abilities";
     // melee hit cooldown so hunter can’t spam
     private static final long ATTACK_COOLDOWN_MS = 600L;
 
     // who is a hunter
-    
+    private final Set<UUID> hunters = new HashSet<>();
     // hunter spawn points
     private final Map<UUID, Location> hunterSpawn = new HashMap<>();
     // last attack times
@@ -51,14 +50,20 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
     // runner to track
     private UUID runnerId = null;
-    
 
     // state flags
     private final Set<UUID> cameraMode = new HashSet<>();
     private final Set<UUID> overdriveActive = new HashSet<>();
     private final Set<UUID> shieldActive = new HashSet<>();
 
-    // helper to safely get potion effects by name (your API doesn’t expose constants)
+    // unlock times (seconds after /robothunter start)
+    private final Map<Ability, Integer> abilityUnlockSeconds = new EnumMap<>(Ability.class);
+    // one-time abilities per hunter
+    private final Map<UUID, EnumSet<Ability>> usedAbilities = new HashMap<>();
+    // ability selected while GUI is open (activate on close)
+    private final Map<UUID, Ability> pendingAbility = new HashMap<>();
+
+    // helper to safely get potion effects by name
     private PotionEffectType effect(String name) {
         PotionEffectType type = PotionEffectType.getByName(name);
         if (type == null) {
@@ -96,16 +101,12 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }
     }
 
-    // unlock times (seconds after /robothunter start)
-    private final Map<Ability, Integer> abilityUnlockSeconds = new EnumMap<>(Ability.class);
-    // abilities used once per hunter
-    private final Map<UUID, EnumSet<Ability>> usedAbilities = new HashMap<>();
-
     // ---------- mines ----------
 
     private static class Mine {
         final Location loc;
         final UUID ownerId;
+
         Mine(Location loc, UUID ownerId) {
             this.loc = loc;
             this.ownerId = ownerId;
@@ -144,8 +145,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                     "abilities." + ability.key + ".unlock_seconds",
                     ability.defaultUnlockSeconds
             );
-            // never unlock before 5 minutes
-            if (unlock < 300) unlock = 300;
+            if (unlock < 300) unlock = 300; // minimum 5 minutes
             abilityUnlockSeconds.put(ability, unlock);
         }
     }
@@ -237,7 +237,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         }
 
         if (args.length == 0) {
-            sender.sendMessage(ChatColor.YELLOW + "Usage: /robothunter <sethunter|setrunner|start|clearhunters|abilities>");
+            sender.sendMessage(ChatColor.YELLOW + "Usage: /robothunter <sethunter|setrunner|start|stop|clearhunters|abilities>");
             return true;
         }
 
@@ -276,12 +276,26 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
             return true;
         }
 
-        // /robothunter start  -> start the run, timers begin now
+        // /robothunter start  -> start the run
         if (args[0].equalsIgnoreCase("start")) {
             gameStartTime = System.currentTimeMillis();
-            usedAbilities.clear(); // reset one-time usage
+            usedAbilities.clear();
+            pendingAbility.clear();
             sender.sendMessage(ChatColor.GREEN + "Robot Hunter run started!");
             Bukkit.broadcastMessage(ChatColor.RED + "[RobotHunter] Run has started!");
+            return true;
+        }
+
+        // /robothunter stop -> stop the run
+        if (args[0].equalsIgnoreCase("stop")) {
+            gameStartTime = -1L;
+            usedAbilities.clear();
+            pendingAbility.clear();
+            overdriveActive.clear();
+            shieldActive.clear();
+            cameraMode.clear();
+            sender.sendMessage(ChatColor.YELLOW + "Robot Hunter run stopped.");
+            Bukkit.broadcastMessage(ChatColor.RED + "[RobotHunter] The run has ended.");
             return true;
         }
 
@@ -340,11 +354,12 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         overdriveActive.clear();
         shieldActive.clear();
         usedAbilities.clear();
+        pendingAbility.clear();
         gameStartTime = -1L;
     }
 
     // ------------------------------------------------------------------ //
-    // ABILITY GUI
+    // ABILITY STATE HELPERS
     // ------------------------------------------------------------------ //
 
     private long getElapsedSeconds() {
@@ -360,6 +375,17 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
     private void markAbilityUsed(UUID hunterId, Ability ability) {
         usedAbilities.computeIfAbsent(hunterId, k -> EnumSet.noneOf(Ability.class)).add(ability);
     }
+
+    private Ability getAbilityByDisplayName(String name) {
+        for (Ability a : Ability.values()) {
+            if (a.displayName.equals(name)) return a;
+        }
+        return null;
+    }
+
+    // ------------------------------------------------------------------ //
+    // ABILITY GUI
+    // ------------------------------------------------------------------ //
 
     private void openAbilityGui(Player p) {
         Inventory inv = Bukkit.createInventory(p, 9, ABILITY_GUI_TITLE);
@@ -388,6 +414,9 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
                 } else {
                     lore.add(ChatColor.GREEN + "Ready!");
                     lore.add(ChatColor.GRAY + "One-time use only.");
+                    if (pendingAbility.get(hunterId) == ability) {
+                        lore.add(ChatColor.AQUA + "Selected: will fire on close");
+                    }
                 }
 
                 meta.setLore(lore);
@@ -399,13 +428,12 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         p.openInventory(inv);
     }
 
-    // click handling
+    // click: just select ability, don’t trigger yet
     @EventHandler
     public void onInventoryClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player)) return;
         Player p = (Player) e.getWhoClicked();
         if (!hunters.contains(p.getUniqueId())) return;
-
         if (!e.getView().getTitle().equals(ABILITY_GUI_TITLE)) return;
 
         e.setCancelled(true);
@@ -415,81 +443,48 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
         if (meta == null || meta.getDisplayName() == null) return;
 
         Ability selected = getAbilityByDisplayName(meta.getDisplayName());
-if (selected != null) {
-    pendingAbility.put(p.getUniqueId(), selected);
-    p.sendMessage(ChatColor.GREEN + "Selected: " + selected.displayName + ChatColor.GRAY + " (closes on GUI exit)");
-
-    private Ability getAbilityByDisplayName(String name) {
-    for (Ability a : Ability.values()) {
-        if (a.displayName.equals(name)) return a;
-    }
-    return null;
-}
-}
+        if (selected != null) {
+            pendingAbility.put(p.getUniqueId(), selected);
+            p.sendMessage(ChatColor.GREEN + "Selected: " + selected.displayName +
+                    ChatColor.GRAY + " (ability will trigger when you close the menu)");
+            // refresh GUI so lore shows “selected”
+            openAbilityGui(p);
+        }
     }
 
-@EventHandler
-public void onInventoryClose(org.bukkit.event.inventory.InventoryCloseEvent e) {
-    if (!(e.getPlayer() instanceof Player)) return;
+    // when GUI closes, actually trigger selected ability
+    @EventHandler
+    public void onInventoryClose(InventoryCloseEvent e) {
+        if (!(e.getPlayer() instanceof Player)) return;
+        Player p = (Player) e.getPlayer();
+        if (!hunters.contains(p.getUniqueId())) return;
+        if (!e.getView().getTitle().equals(ABILITY_GUI_TITLE)) return;
 
-    Player p = (Player) e.getPlayer();
-    if (!hunters.contains(p.getUniqueId())) return;
-
-    if (!e.getView().getTitle().equals(ABILITY_GUI_TITLE)) return;
-
-    UUID id = p.getUniqueId();
-
-    // If no ability was selected, do nothing
-    if (!pendingAbility.containsKey(id)) return;
-
-    Ability selected = pendingAbility.remove(id);
-    long elapsed = getElapsedSeconds();
-
-    int unlock = abilityUnlockSeconds.getOrDefault(selected, selected.defaultUnlockSeconds);
-
-    if (elapsed < unlock) {
-        p.sendMessage(ChatColor.RED + "Ability is still locked for " + (unlock - elapsed) + " more seconds.");
-        return;
-    }
-
-    if (hasUsedAbility(id, selected)) {
-        p.sendMessage(ChatColor.RED + "You already used this ability (one-time).");
-        return;
-    }
-
-    if (triggerAbility(p, selected)) {
-        markAbilityUsed(id, selected);
-    }
-}
-
-    private void handleAbilityClick(Player p, String displayName) {
-        UUID hunterId = p.getUniqueId();
-        Ability ability = Arrays.stream(Ability.values())
-                .filter(a -> a.displayName.equals(displayName))
-                .findFirst()
-                .orElse(null);
-        if (ability == null) return;
+        UUID id = p.getUniqueId();
+        Ability selected = pendingAbility.remove(id);
+        if (selected == null) return; // nothing picked
 
         long elapsed = getElapsedSeconds();
+        int unlock = abilityUnlockSeconds.getOrDefault(selected, selected.defaultUnlockSeconds);
+
         if (gameStartTime <= 0) {
             p.sendMessage(ChatColor.RED + "The run hasn’t started yet. Use /robothunter start.");
             return;
         }
 
-        int unlock = abilityUnlockSeconds.getOrDefault(ability, ability.defaultUnlockSeconds);
         if (elapsed < unlock) {
             long remaining = unlock - elapsed;
             p.sendMessage(ChatColor.RED + "Ability locked for " + remaining + " more seconds.");
             return;
         }
 
-        if (hasUsedAbility(hunterId, ability)) {
+        if (hasUsedAbility(id, selected)) {
             p.sendMessage(ChatColor.RED + "You already used this ability (one-time only).");
             return;
         }
 
-        if (triggerAbility(p, ability)) {
-            markAbilityUsed(hunterId, ability);
+        if (triggerAbility(p, selected)) {
+            markAbilityUsed(id, selected);
         }
     }
 
@@ -766,6 +761,7 @@ public void onInventoryClose(org.bukkit.event.inventory.InventoryCloseEvent e) {
         overdriveActive.remove(id);
         shieldActive.remove(id);
         usedAbilities.remove(id);
+        pendingAbility.remove(id);
     }
 
     // ------------------------------------------------------------------ //
@@ -777,7 +773,7 @@ public void onInventoryClose(org.bukkit.event.inventory.InventoryCloseEvent e) {
         if (!sender.hasPermission("robothunter.use")) return Collections.emptyList();
 
         if (args.length == 1) {
-            return Arrays.asList("sethunter", "setrunner", "start", "clearhunters", "abilities").stream()
+            return Arrays.asList("sethunter", "setrunner", "start", "stop", "clearhunters", "abilities").stream()
                     .filter(s -> s.toLowerCase().startsWith(args[0].toLowerCase()))
                     .collect(Collectors.toList());
         }
