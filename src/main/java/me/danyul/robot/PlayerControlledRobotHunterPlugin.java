@@ -33,12 +33,14 @@ import java.util.stream.Collectors;
 
 public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
 
+    private final Map<UUID, Ability> pendingAbility = new HashMap<>();
+
     private static final String ABILITY_GUI_TITLE = ChatColor.DARK_RED + "Robot Abilities";
     // melee hit cooldown so hunter can’t spam
     private static final long ATTACK_COOLDOWN_MS = 600L;
 
     // who is a hunter
-    private final Set<UUID> hunters = new HashSet<>();
+    
     // hunter spawn points
     private final Map<UUID, Location> hunterSpawn = new HashMap<>();
     // last attack times
@@ -49,6 +51,7 @@ public class PlayerControlledRobotHunterPlugin extends JavaPlugin implements Lis
 
     // runner to track
     private UUID runnerId = null;
+    
 
     // state flags
     private final Set<UUID> cameraMode = new HashSet<>();
